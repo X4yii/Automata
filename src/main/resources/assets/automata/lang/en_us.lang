@@ -1,0 +1,17 @@
+entity.automata.automaton.name=Automaton
+item.automata.automaton_terminator.name=Automaton Dismissal Blade
+item.automata.automaton_terminator.tooltip=Can permanently eliminate downed or active automata.
+item.automata.automa_staff.name=AutomaStaff
+item.automata.automa_staff.tooltip=Sneak+RClick Automaton: Bind/Apply A-B | RClick/Sneak+RClick Block: Point A/B | Sneak+LClick: Select Chest | LClick Automaton: Unstick Nudge.
+message.automata.limit_reached=You have reached the maximum limit of %s active automata.
+message.automata.pos1_set=Point A (Pos1) set to %s, %s, %s.
+message.automata.pos2_set=Point B (Pos2) set to %s, %s, %s.
+message.automata.region_applied=Region applied to automaton.
+message.automata.no_region_marked=Mark Point A or B first before applying.
+message.automata.staff_bound=Bound AutomaStaff to %s.
+message.automata.staff_chest_select_bot=Selected %s: Sneak+Left-click a chest to assign deposit target.
+message.automata.chest_selected=Deposit chest selected at %s, %s, %s.
+message.automata.chest_assigned=Assigned deposit chest (%s, %s, %s) to automaton.
+message.automata.staff_nudge=Nudged automaton to find another route or task step.
+commands.automata.usage=/automata spawn [skinName]
+commands.automata.spawn.success=Spawned automaton with entity ID %s.

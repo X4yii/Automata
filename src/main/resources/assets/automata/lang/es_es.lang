@@ -1,0 +1,17 @@
+entity.automata.automaton.name=Autómata
+item.automata.automaton_terminator.name=Hoja de Despedida de Autómata
+item.automata.automaton_terminator.tooltip=Puede eliminar permanentemente autómatas abatidos o activos.
+item.automata.automa_staff.name=AutomaStaff
+item.automata.automa_staff.tooltip=Shift+Clic Der. Autómata: Vincular/Aplicar A-B | Clic Der./Shift+Clic Der. Bloque: Punto A/B | Shift+Clic Izq.: Cofre | Clic Izq. Autómata: Azote anti-atasco.
+message.automata.limit_reached=Has alcanzado el límite máximo de %s autómatas activos.
+message.automata.pos1_set=Punto A (Pos1) fijado en %s, %s, %s.
+message.automata.pos2_set=Punto B (Pos2) fijado en %s, %s, %s.
+message.automata.region_applied=Región aplicada al autómata.
+message.automata.no_region_marked=Marca primero el Punto A o B antes de aplicar.
+message.automata.staff_bound=AutomaStaff vinculado a %s.
+message.automata.staff_chest_select_bot=%s seleccionado: Shift+Clic Izquierdo en un cofre para asignarlo.
+message.automata.chest_selected=Cofre de depósito seleccionado en %s, %s, %s.
+message.automata.chest_assigned=Cofre de depósito (%s, %s, %s) asignado al autómata.
+message.automata.staff_nudge=Azote aplicado: el autómata buscará otra ruta o acción.
+commands.automata.usage=/automata spawn [nombreSkin]
+commands.automata.spawn.success=Autómata invocado con ID de entidad %s.
