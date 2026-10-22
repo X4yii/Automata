@@ -5,7 +5,8 @@ public record PathfindingSettings(
         boolean allowSprintJump,
         boolean allowScaffolding,
         int maxExpandedNodes,
-        int maxFallDistance) {
+        int maxFallDistance,
+        int availableScaffoldBlocks) {
 
     public static final int DEFAULT_MAX_NODES = 8192;
     public static final int DEFAULT_MAX_FALL = 4;
@@ -13,6 +14,16 @@ public record PathfindingSettings(
     public PathfindingSettings {
         maxExpandedNodes = Math.max(64, maxExpandedNodes);
         maxFallDistance = Math.max(1, maxFallDistance);
+        availableScaffoldBlocks = Math.max(0, availableScaffoldBlocks);
+    }
+
+    public PathfindingSettings(
+            boolean allowBreakThrough,
+            boolean allowSprintJump,
+            boolean allowScaffolding,
+            int maxExpandedNodes,
+            int maxFallDistance) {
+        this(allowBreakThrough, allowSprintJump, allowScaffolding, maxExpandedNodes, maxFallDistance, Integer.MAX_VALUE);
     }
 
     public static PathfindingSettings defaults(boolean allowBreakThrough, boolean allowScaffolding) {
@@ -21,6 +32,7 @@ public record PathfindingSettings(
                 true,
                 allowScaffolding,
                 DEFAULT_MAX_NODES,
-                DEFAULT_MAX_FALL);
+                DEFAULT_MAX_FALL,
+                Integer.MAX_VALUE);
     }
 }

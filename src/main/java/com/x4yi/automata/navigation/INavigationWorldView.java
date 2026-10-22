@@ -11,7 +11,8 @@ public interface INavigationWorldView {
     }
 
     default boolean isSolidSupport(int x, int y, int z) {
-        return getCellType(x, y, z) == BlockCellType.SOLID;
+        byte cell = getCellType(x, y, z);
+        return cell == BlockCellType.SOLID || cell == BlockCellType.UNBREAKABLE;
     }
 
     default boolean isHazard(int x, int y, int z) {

@@ -3,31 +3,18 @@ package com.x4yi.automata.movement;
 
 import javax.annotation.Nullable;
 
-import net.minecraft.block.SoundType;
-import net.minecraft.block.state.IBlockState;
-import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.SharedMonsterAttributes;
 import net.minecraft.init.Blocks;
-import net.minecraft.item.ItemBlock;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.EnumActionResult;
 import net.minecraft.util.EnumFacing;
-import net.minecraft.util.EnumHand;
-import net.minecraft.util.SoundCategory;
-import net.minecraft.util.math.AxisAlignedBB;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.WorldServer;
 
-import com.x4yi.automata.ai.EquipmentSelector;
 import com.x4yi.automata.config.AutomataConfig;
 import com.x4yi.automata.entity.EntityAutomaton;
 import com.x4yi.automata.navigation.PackedPos;
 import com.x4yi.automata.navigation.PathNodeAction;
 import com.x4yi.automata.navigation.PathResult;
-import com.x4yi.automata.navigation.WorldCacheManager;
-import com.x4yi.automata.world.FakePlayerService;
-import com.x4yi.automata.world.MiningProgressController;
 
 public class HumanMovementController {
 
@@ -58,24 +45,9 @@ public class HumanMovementController {
     private static final double BRIDGE_PLACE_DIST_SQ = 2.25D;
     private static final double BRIDGE_HOLD_DIST_SQ = 1.15D;
     private static final double PILLAR_CENTER_TOLERANCE = 0.22D;
-    private static final EnumFacing[] BRIDGE_FACE_ORDER = {
-            EnumFacing.NORTH,
-            EnumFacing.SOUTH,
-            EnumFacing.EAST,
-            EnumFacing.WEST,
-            EnumFacing.DOWN,
-            EnumFacing.UP
-    };
-    private static final EnumFacing[] PILLAR_FACE_ORDER = {
-            EnumFacing.DOWN,
-            EnumFacing.NORTH,
-            EnumFacing.SOUTH,
-            EnumFacing.EAST,
-            EnumFacing.WEST,
-            EnumFacing.UP
-    };
 
     private final EntityAutomaton automaton;
+    private final BlockPlacementService placementService = new BlockPlacementService();
 
     private MovementMood mood = MovementMood.CHILL;
 
@@ -244,11 +216,16 @@ public class HumanMovementController {
             horizDistSq = dx * dx + dz * dz;
         }
 
-        if (automaton.getDistanceSq(stuckOriginX, stuckOriginY, stuckOriginZ) >= MIN_STUCK_PROGRESS_SQ) {
+        placementService.tickCooldown();
+        boolean verticalProgress = Math.abs(automaton.posY - stuckOriginY) >= 0.45D;
+        if (verticalProgress || automaton.getDistanceSq(stuckOriginX, stuckOriginY, stuckOriginZ) >= MIN_STUCK_PROGRESS_SQ) {
             resetStuckTracker();
         } else {
             stuckTicks++;
             int stuckLimit = automaton.collidedHorizontally ? COLLISION_STUCK_INTERVAL_TICKS : STUCK_CHECK_INTERVAL_TICKS;
+            if (currentAction == PathNodeAction.PILLAR_UP) {
+                stuckLimit = Math.max(stuckLimit, 40);
+            }
             if (stuckTicks >= stuckLimit) {
                 lastStuckGoal = activePath.getStep(activePath.length() - 1);
                 clearPath();
@@ -328,14 +305,27 @@ public class HumanMovementController {
         }
 
         if (automaton.isInWater()) {
-            boolean needsAirInWater = automaton.getAir() < (miningActive ? 60 : 150);
-            if ((!miningActive && targetY >= automaton.posY - 0.15D) || needsAirInWater) {
+            if (!miningActive && canSprint) {
+                automaton.setSprinting(true);
+            }
+            lookSmoothlyAt(stepX + 0.5D, targetY + automaton.getEyeHeight(), stepZ + 0.5D);
+            boolean needsAirInWater = automaton.getAir() < (miningActive ? 60 : 120);
+            boolean stepIsDry = automaton.world.getBlockState(new BlockPos(stepX, stepY, stepZ)).getMaterial()
+                    != net.minecraft.block.material.Material.WATER;
+            boolean climbingOut = !miningActive && ((stepIsDry && targetY > automaton.posY + 0.10D)
+                    || (automaton.collidedHorizontally && targetY >= automaton.posY - 0.15D)
+                    || targetY > automaton.posY + 0.85D);
+            if (needsAirInWater || climbingOut) {
                 automaton.getJumpHelper().setJumping();
-                if (automaton.motionY < 0.08D) {
+                if (climbingOut && automaton.collidedHorizontally && automaton.motionY < 0.34D) {
+                    automaton.motionY = 0.34D;
+                } else if (!automaton.isSwimming() && automaton.motionY < 0.08D) {
                     automaton.motionY += 0.04D;
                 }
-            } else if ((miningActive || targetY < automaton.posY - 0.5D) && automaton.getAir() >= 60) {
-                if (automaton.motionY > -0.06D) {
+            } else if ((miningActive || targetY < automaton.posY - 0.25D) && automaton.getAir() >= 60) {
+                if (automaton.isSwimming() && automaton.motionY > -0.18D) {
+                    automaton.motionY -= 0.03D;
+                } else if (!automaton.isSwimming() && automaton.motionY > -0.06D) {
                     automaton.motionY -= 0.02D;
                 }
             }
@@ -344,8 +334,8 @@ public class HumanMovementController {
                     && AutomataConfig.allowTerrainModificationInPathing
                     && automaton.getTaskConfig().isAllowScaffolding()) {
                 BlockPos waterEscape = new BlockPos(stepX, stepY - 1, stepZ);
-                if (!ws.getBlockState(waterEscape).getMaterial().isSolid()) {
-                    placeBuildingBlockAt(ws, waterEscape, false, false);
+                if (!CellClassifier.isSolidSupport(ws, waterEscape)) {
+                    placementService.tryPlaceBlockLegit(ws, automaton, this, waterEscape, false, false);
                 }
             }
         } else if (automaton.onGround && !miningActive) {
@@ -395,11 +385,7 @@ public class HumanMovementController {
     }
 
     private boolean isPassableForJump(BlockPos pos) {
-        if (!automaton.world.isBlockLoaded(pos)) {
-            return false;
-        }
-        AxisAlignedBB box = automaton.world.getBlockState(pos).getCollisionBoundingBox(automaton.world, pos);
-        return box == null || box.maxY <= 0.25D;
+        return CellClassifier.isPassable(automaton.world, pos);
     }
 
     static boolean hasReachedAscendWaypoint(double horizDistSq, double dy) {
@@ -418,15 +404,11 @@ public class HumanMovementController {
             return false;
         }
         BlockPos landPos = new BlockPos(stepX, stepY, stepZ);
-        BlockPos supportPos = landPos.down();
-        if (!automaton.world.isBlockLoaded(supportPos)) {
+        if (!CellClassifier.isSolidSupport(automaton.world, landPos.down())) {
             return false;
         }
-        if (!automaton.world.getBlockState(supportPos).getMaterial().isSolid()) {
-            return false;
-        }
-        return !automaton.world.getBlockState(landPos).getMaterial().blocksMovement()
-                && !automaton.world.getBlockState(landPos.up()).getMaterial().blocksMovement();
+        return CellClassifier.isPassable(automaton.world, landPos)
+                && CellClassifier.isPassable(automaton.world, landPos.up());
     }
 
     private boolean applyParkourAirControl(double dx, double dy, double dz, double horizDist, boolean canSprint) {
@@ -462,6 +444,9 @@ public class HumanMovementController {
             return;
         }
         double baseSpeed = automaton.getEntityAttribute(SharedMonsterAttributes.MOVEMENT_SPEED).getAttributeValue();
+        if (automaton.isSneaking()) {
+            baseSpeed *= 0.35D;
+        }
         automaton.setAIMoveSpeed((float) baseSpeed);
         float targetYaw = (float) (MathHelper.atan2(mdz, mdx) * (180.0D / Math.PI)) - 90.0F;
         float relRad = MathHelper.wrapDegrees(targetYaw - automaton.rotationYaw) * (float) (Math.PI / 180.0D);
@@ -478,19 +463,7 @@ public class HumanMovementController {
                 clearPath();
                 return false;
             }
-            BlockPos feet = new BlockPos(stepX, stepY, stepZ);
-            BlockPos upperHead = feet.up(2);
-            if (stepY < automaton.posY - 0.5D && !worldServer.isAirBlock(upperHead)
-                    && worldServer.getBlockState(upperHead).getCollisionBoundingBox(worldServer, upperHead) != null) {
-                if (!tryClearObstacle(worldServer, upperHead)) {
-                    return false;
-                }
-            }
-            BlockPos head = feet.up();
-            if (!tryClearObstacle(worldServer, head)) {
-                return false;
-            }
-            return tryClearObstacle(worldServer, feet);
+            return TerrainBreaker.clearBreakThroughStep(worldServer, automaton, this, stepX, stepY, stepZ);
         }
         if (action == PathNodeAction.BRIDGE) {
             if (!AutomataConfig.allowTerrainModificationInPathing || !automaton.getTaskConfig().isAllowScaffolding()) {
@@ -499,18 +472,17 @@ public class HumanMovementController {
                 return false;
             }
             BlockPos support = new BlockPos(stepX, stepY - 1, stepZ);
-            if (!worldServer.getBlockState(support).getMaterial().isSolid()) {
+            if (!CellClassifier.isSolidSupport(worldServer, support)) {
+                automaton.setSprinting(false);
+                automaton.setSneaking(true);
                 double dx = (stepX + 0.5D) - automaton.posX;
                 double dz = (stepZ + 0.5D) - automaton.posZ;
                 double horizDistSq = dx * dx + dz * dz;
-                boolean sneak = shouldSneakForBridge(horizDistSq);
-                automaton.setSneaking(sneak);
                 if (!shouldAttemptBridgePlace(horizDistSq)) {
                     return true;
                 }
-                placeBuildingBlockAt(worldServer, support, true, false);
-                boolean placed = worldServer.getBlockState(support).getMaterial().isSolid();
-                if (placed) {
+                placementService.tryPlaceBlockLegit(worldServer, automaton, this, support, true, false);
+                if (CellClassifier.isSolidSupport(worldServer, support)) {
                     automaton.setSneaking(false);
                     return true;
                 }
@@ -519,7 +491,6 @@ public class HumanMovementController {
                     automaton.motionZ *= 0.25D;
                     automaton.setMoveForward(0.0F);
                     automaton.setMoveStrafing(0.0F);
-                    automaton.setSprinting(false);
                     return false;
                 }
                 return true;
@@ -531,8 +502,15 @@ public class HumanMovementController {
                 clearPath();
                 return false;
             }
+            // Clear any low ceiling at cy+3 before pillaring upward.
+            BlockPos ceiling = new BlockPos(stepX, stepY + 2, stepZ);
+            if (!CellClassifier.isPassable(worldServer, ceiling)) {
+                if (!TerrainBreaker.tryClearSingleBlock(worldServer, automaton, this, ceiling)) {
+                    return false;
+                }
+            }
             BlockPos support = new BlockPos(stepX, stepY - 1, stepZ);
-            if (!worldServer.getBlockState(support).getMaterial().isSolid()) {
+            if (!CellClassifier.isSolidSupport(worldServer, support)) {
                 double centerX = stepX + 0.5D;
                 double centerZ = stepZ + 0.5D;
                 double dx = centerX - automaton.posX;
@@ -549,14 +527,15 @@ public class HumanMovementController {
                 automaton.setMoveForward(0.0F);
                 automaton.setMoveStrafing(0.0F);
                 automaton.setSprinting(false);
+                lookAtBlockPoint(centerX, stepY - 1.0D, centerZ);
                 if (automaton.onGround) {
                     automaton.getJumpHelper().setJumping();
                     return false;
                 }
                 if (automaton.posY >= stepY + 0.02D) {
-                    placeBuildingBlockAt(worldServer, support, false, false);
+                    placementService.tryPlaceBlockLegit(worldServer, automaton, this, support, false, false);
                 }
-                return worldServer.getBlockState(support).getMaterial().isSolid();
+                return CellClassifier.isSolidSupport(worldServer, support);
             }
         }
         return true;
@@ -567,7 +546,7 @@ public class HumanMovementController {
     }
 
     public boolean placeSupportBlockAt(WorldServer world, BlockPos targetPos, boolean bridgeMode, boolean lavaRescue) {
-        return placeBuildingBlockAt(world, targetPos, bridgeMode, lavaRescue);
+        return placementService.tryPlaceBlockLegit(world, automaton, this, targetPos, bridgeMode, lavaRescue);
     }
 
     static boolean isWithinTerrainReach(double botX, double botY, double botZ, int blockX, int blockY, int blockZ) {
@@ -591,98 +570,6 @@ public class HumanMovementController {
 
     static boolean needsPillarCentering(double dx, double dz) {
         return Math.abs(dx) > PILLAR_CENTER_TOLERANCE || Math.abs(dz) > PILLAR_CENTER_TOLERANCE;
-    }
-
-    private boolean tryClearObstacle(WorldServer world, BlockPos pos) {
-        IBlockState state = world.getBlockState(pos);
-        if (world.isAirBlock(pos) || state.getCollisionBoundingBox(world, pos) == null) {
-            return true;
-        }
-        if (state.getBlockHardness(world, pos) < 0.0F) {
-            clearPath();
-            return false;
-        }
-        if (!isWithinTerrainReach(automaton.posX, automaton.posY, automaton.posZ, pos.getX(), pos.getY(), pos.getZ())) {
-            return true;
-        }
-        automaton.motionX *= 0.4D;
-        automaton.motionZ *= 0.4D;
-        automaton.setMoveForward(0.0F);
-        automaton.setMoveStrafing(0.0F);
-        automaton.setSprinting(false);
-        if (MiningProgressController.shouldDeferMiningInAir(automaton.onGround, automaton.isInWater(), automaton.isOnLadder())) {
-            return false;
-        }
-        lookAtBlockFace(pos);
-        return automaton.getBrain().getContext().getMiningController().stepBreakBlock(world, automaton, pos);
-    }
-
-    private boolean placeBuildingBlockAt(WorldServer world, BlockPos targetPos, boolean bridgeMode, boolean lavaRescue) {
-        if (!world.isBlockLoaded(targetPos)) {
-            return false;
-        }
-        IBlockState existing = world.getBlockState(targetPos);
-        if (!world.isAirBlock(targetPos) && !existing.getBlock().isReplaceable(world, targetPos)) {
-            return existing.getMaterial().isSolid();
-        }
-        if (!EquipmentSelector.equipBuildingBlock(automaton)) {
-            if (!lavaRescue) {
-                clearPath();
-            }
-            return false;
-        }
-        AxisAlignedBB blockBox = new AxisAlignedBB(targetPos);
-        if (!world.getEntitiesWithinAABB(
-                EntityLivingBase.class,
-                blockBox,
-                e -> e != null && e != automaton && e.isEntityAlive()).isEmpty()) {
-            return false;
-        }
-        boolean bridgeEdgeGrazeAllowed = bridgeMode && automaton.getEntityBoundingBox().minY >= targetPos.getY() + 0.85D;
-        boolean selfIntersectAllowed = automaton.isInWater() || bridgeEdgeGrazeAllowed || lavaRescue;
-        if (automaton.getEntityBoundingBox().intersects(blockBox) && !selfIntersectAllowed) {
-            return false;
-        }
-        EnumFacing[] faceOrder = bridgeMode ? BRIDGE_FACE_ORDER : PILLAR_FACE_ORDER;
-        for (EnumFacing facing : faceOrder) {
-            BlockPos neighbor = targetPos.offset(facing);
-            if (world.getBlockState(neighbor).getMaterial().isSolid()) {
-                lookAtBlockFace(neighbor, facing.getOpposite());
-                automaton.swingArm(EnumHand.MAIN_HAND);
-                EnumActionResult res = FakePlayerService.tryUseItemOnBlock(
-                        world, automaton, EnumHand.MAIN_HAND, neighbor, facing.getOpposite(), 0.5F, 0.5F, 0.5F);
-                if (res == EnumActionResult.SUCCESS) {
-                    if ((bridgeEdgeGrazeAllowed || lavaRescue) && automaton.posY < targetPos.getY() + 1.0D) {
-                        automaton.setPosition(automaton.posX, targetPos.getY() + 1.0D, automaton.posZ);
-                    }
-                    WorldCacheManager.invalidateBlock(world, targetPos);
-                    return true;
-                }
-            }
-        }
-        ItemStack held = automaton.getHeldItemMainhand();
-        if (held.isEmpty() || !(held.getItem() instanceof ItemBlock itemBlock)) {
-            return false;
-        }
-        IBlockState placedState = itemBlock.getBlock().getStateFromMeta(held.getMetadata());
-        if (world.setBlockState(targetPos, placedState, 3)) {
-            SoundType soundType = placedState.getBlock().getSoundType(placedState, world, targetPos, automaton);
-            world.playSound(
-                    null,
-                    targetPos,
-                    soundType.getPlaceSound(),
-                    SoundCategory.BLOCKS,
-                    (soundType.getVolume() + 1.0F) * 0.5F,
-                    soundType.getPitch() * 0.8F);
-            held.shrink(1);
-            automaton.swingArm(EnumHand.MAIN_HAND);
-            if ((bridgeEdgeGrazeAllowed || lavaRescue) && automaton.posY < targetPos.getY() + 1.0D) {
-                automaton.setPosition(automaton.posX, targetPos.getY() + 1.0D, automaton.posZ);
-            }
-            WorldCacheManager.invalidateBlock(world, targetPos);
-            return true;
-        }
-        return false;
     }
 
     public void lookAtBlockFace(BlockPos pos) {

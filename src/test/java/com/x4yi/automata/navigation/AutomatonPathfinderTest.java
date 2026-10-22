@@ -534,6 +534,67 @@ class AutomatonPathfinderTest {
         assertFalse(negativeYGoal.isComplete());
     }
 
+    @Test
+    void respectsAvailableScaffoldBlocksBudget() {
+        SyntheticWorld world = new SyntheticWorld();
+        world.fillFloor(0, 1, 64, 1, 3, BlockCellType.SOLID);
+        world.fillFloor(5, 6, 64, 1, 3, BlockCellType.SOLID);
+
+        PathfindingSettings oneBlock = new PathfindingSettings(false, false, true, 2048, 4, 1);
+        PathResult limited = AutomatonPathfinder.findPath(world, 1, 65, 2, 5, 65, 2, oneBlock, null);
+        assertFalse(limited.isComplete());
+
+        PathfindingSettings threeBlocks = new PathfindingSettings(false, false, true, 2048, 4, 3);
+        PathResult sufficient = AutomatonPathfinder.findPath(world, 1, 65, 2, 5, 65, 2, threeBlocks, null);
+        assertTrue(sufficient.isComplete());
+    }
+
+    @Test
+    void doesNotBreakThroughUnbreakableCells() {
+        SyntheticWorld world = new SyntheticWorld();
+        world.fillFloor(0, 6, 64, 0, 4, BlockCellType.SOLID);
+        for (int z = 0; z <= 4; z++) {
+            world.set(3, 65, z, BlockCellType.UNBREAKABLE);
+            world.set(3, 66, z, BlockCellType.UNBREAKABLE);
+            world.set(3, 67, z, BlockCellType.UNBREAKABLE);
+            world.set(3, 68, z, BlockCellType.UNBREAKABLE);
+        }
+        PathfindingSettings breakOnly = new PathfindingSettings(true, false, false, 2048, 4, 0);
+        PathResult result = AutomatonPathfinder.findPath(world, 1, 65, 2, 5, 65, 2, breakOnly, null);
+        assertFalse(result.isComplete());
+    }
+
+    @Test
+    void requiresBreakableCurrentCeilingForAscendingCaveStair() {
+        SyntheticWorld world = new SyntheticWorld();
+        // Solid stone wall at x=2, y=65..67, with unbreakable ceiling directly above start (1, 67, 2).
+        world.fillFloor(0, 4, 64, 1, 3, BlockCellType.SOLID);
+        for (int y = 65; y <= 67; y++) {
+            for (int z = 1; z <= 3; z++) {
+                world.set(2, y, z, y == 65 ? BlockCellType.UNBREAKABLE : BlockCellType.SOLID);
+                world.set(3, y, z, BlockCellType.SOLID);
+            }
+        }
+        for (int z = 1; z <= 3; z++) {
+            world.set(1, 67, z, BlockCellType.UNBREAKABLE);
+        }
+        // Prevent going around via z=0 or z=4
+        for (int z : new int[]{0, 4}) {
+            for (int x = 0; x <= 4; x++) {
+                world.set(x, 65, z, BlockCellType.UNBREAKABLE);
+                world.set(x, 66, z, BlockCellType.UNBREAKABLE);
+            }
+        }
+        PathfindingSettings breakOnly = new PathfindingSettings(true, false, false, 2048, 4, 0);
+        PathResult blocked = AutomatonPathfinder.findPath(world, 1, 65, 2, 2, 66, 2, breakOnly, null);
+        assertFalse(blocked.isComplete());
+
+        // Making (1, 67, 2) breakable SOLID allows carving the ascending step.
+        world.set(1, 67, 2, BlockCellType.SOLID);
+        PathResult allowed = AutomatonPathfinder.findPath(world, 1, 65, 2, 2, 66, 2, breakOnly, null);
+        assertTrue(allowed.isComplete());
+    }
+
     private static final class SyntheticWorld implements INavigationWorldView {
         private final Map<Long, Byte> cells = new HashMap<>();
 
