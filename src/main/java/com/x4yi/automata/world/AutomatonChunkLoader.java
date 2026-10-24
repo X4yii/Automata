@@ -10,6 +10,8 @@ import java.util.Set;
 import javax.annotation.Nullable;
 
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
@@ -47,7 +49,11 @@ public class AutomatonChunkLoader {
     }
 
     public void update() {
-        if (automaton.world.isRemote || automaton.isDead || automaton.isDowned()) {
+        if (automaton.world.isRemote || automaton.isDead) {
+            return;
+        }
+        if (automaton.isDowned() || !isOwnerPresentAndAlive()) {
+            releaseAll();
             return;
         }
         int centerX = automaton.chunkCoordX;
@@ -105,6 +111,16 @@ public class AutomatonChunkLoader {
                 ForgeChunkManager.forceChunk(ticket, pos);
             }
         }
+    }
+
+    private boolean isOwnerPresentAndAlive() {
+        java.util.UUID ownerUuid = automaton.getOwnerUuid();
+        MinecraftServer server = automaton.world.getMinecraftServer();
+        if (ownerUuid == null || server == null) {
+            return false;
+        }
+        EntityPlayerMP owner = server.getPlayerList().getPlayerByUUID(ownerUuid);
+        return owner != null && owner.isEntityAlive();
     }
 
     public boolean isChunkCovered(int chunkX, int chunkZ) {

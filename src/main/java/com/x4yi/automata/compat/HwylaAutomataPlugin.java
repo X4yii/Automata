@@ -74,7 +74,9 @@ public class HwylaAutomataPlugin implements IWailaPlugin, IWailaEntityProvider {
 
     private static String formatJobTitle(EntityAutomaton bot) {
         JobDescriptor descriptor = AutomataAPI.getJob(bot.getTaskConfig().getJobId());
-        return descriptor != null ? descriptor.getTitleKey() : bot.getTaskConfig().getJobId().toString();
+        return descriptor != null
+                ? net.minecraft.util.text.translation.I18n.translateToLocal(descriptor.getTitleKey())
+                : bot.getTaskConfig().getJobId().toString();
     }
 
     private static String resolveStatus(EntityAutomaton bot) {

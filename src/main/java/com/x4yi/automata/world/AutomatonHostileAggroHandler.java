@@ -4,12 +4,16 @@ import net.minecraft.entity.EntityCreature;
 import net.minecraft.entity.EntityLiving;
 import net.minecraft.entity.ai.EntityAINearestAttackableTarget;
 import net.minecraft.entity.monster.IMob;
+import net.minecraft.entity.projectile.EntityArrow;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
+import net.minecraftforge.event.entity.ProjectileImpactEvent;
+import net.minecraftforge.event.entity.living.LivingAttackEvent;
 import net.minecraftforge.event.entity.living.LivingSetAttackTargetEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
 import com.x4yi.automata.AutomataMod;
+import com.x4yi.automata.compat.SpartanWeaponryCompat;
 import com.x4yi.automata.entity.EntityAutomaton;
 
 /**
@@ -44,6 +48,40 @@ public final class AutomatonHostileAggroHandler {
                 && event.getEntityLiving() instanceof EntityLiving living) {
             living.setAttackTarget(null);
             living.setRevengeTarget(null);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onLivingAttack(LivingAttackEvent event) {
+        if (event.getEntityLiving().world.isRemote) {
+            return;
+        }
+        if (event.getEntityLiving() instanceof EntityAutomaton bot && bot.isDowned()) {
+            if (event.getSource().getTrueSource() instanceof EntityLiving living) {
+                living.setAttackTarget(null);
+                living.setRevengeTarget(null);
+            }
+            event.setCanceled(true);
+            return;
+        }
+        if (event.getEntityLiving() instanceof EntityAutomaton
+                && SpartanWeaponryCompat.isBoomerangEntity(event.getSource().getImmediateSource())
+                && event.getSource().getTrueSource() instanceof EntityAutomaton) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onProjectileImpact(ProjectileImpactEvent event) {
+        if (event.getEntity().world.isRemote) {
+            return;
+        }
+        if (event.getRayTraceResult() != null
+                && event.getRayTraceResult().entityHit instanceof EntityAutomaton
+                && event.getEntity() instanceof EntityArrow arrow
+                && arrow.shootingEntity instanceof EntityAutomaton
+                && SpartanWeaponryCompat.isBoomerangEntity(arrow)) {
+            event.setCanceled(true);
         }
     }
 
