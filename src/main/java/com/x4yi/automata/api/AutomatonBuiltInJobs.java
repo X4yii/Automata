@@ -15,6 +15,7 @@ public final class AutomatonBuiltInJobs {
     public static final ResourceLocation DEFEND = new ResourceLocation("automata", "defend");
     public static final ResourceLocation CRAZY_DEFEND = new ResourceLocation("automata", "crazy_defend");
     public static final ResourceLocation COURIER = new ResourceLocation("automata", "courier");
+    public static final ResourceLocation ROAM = new ResourceLocation("automata", "roam");
 
     private AutomatonBuiltInJobs() {
     }

@@ -23,6 +23,8 @@ public final class JobDescriptor {
     private final String descriptionKey;
     private final MovementMood movementMood;
     private final boolean logisticsEligible;
+    private final boolean combat;
+    private final int decisionIntervalTicks;
     private final Supplier<IAutomatonJob> factory;
     @Nullable
     private final Predicate<ItemStack> toolMatcher;
@@ -35,6 +37,8 @@ public final class JobDescriptor {
         this.descriptionKey = Objects.requireNonNull(builder.descriptionKey, "descriptionKey");
         this.movementMood = Objects.requireNonNull(builder.movementMood, "movementMood");
         this.logisticsEligible = builder.logisticsEligible;
+        this.combat = builder.combat;
+        this.decisionIntervalTicks = builder.decisionIntervalTicks;
         this.factory = Objects.requireNonNull(builder.factory, "factory");
         this.toolMatcher = builder.toolMatcher;
         this.needsToolPredicate = builder.needsToolPredicate;
@@ -58,6 +62,14 @@ public final class JobDescriptor {
 
     public boolean isLogisticsEligible() {
         return logisticsEligible;
+    }
+
+    public boolean isCombat() {
+        return combat;
+    }
+
+    public int getDecisionIntervalTicks() {
+        return decisionIntervalTicks;
     }
 
     public boolean hasToolMatcher() {
@@ -91,6 +103,8 @@ public final class JobDescriptor {
         private String descriptionKey;
         private MovementMood movementMood = MovementMood.CHILL;
         private boolean logisticsEligible = true;
+        private boolean combat = false;
+        private int decisionIntervalTicks = 0;
         @Nullable
         private Predicate<ItemStack> toolMatcher;
         @Nullable
@@ -120,6 +134,16 @@ public final class JobDescriptor {
 
         public Builder logisticsEligible(boolean logisticsEligible) {
             this.logisticsEligible = logisticsEligible;
+            return this;
+        }
+
+        public Builder combat(boolean combat) {
+            this.combat = combat;
+            return this;
+        }
+
+        public Builder decisionIntervalTicks(int decisionIntervalTicks) {
+            this.decisionIntervalTicks = decisionIntervalTicks;
             return this;
         }
 

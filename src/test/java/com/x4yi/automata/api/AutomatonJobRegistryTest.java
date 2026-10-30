@@ -58,6 +58,10 @@ class AutomatonJobRegistryTest {
         assertEquals(AutomatonBuiltInJobs.IDLE, all.get(0).getId());
         assertEquals(AutomatonBuiltInJobs.EXCAVATION, all.get(1).getId());
         assertNotNull(AutomataAPI.getJob(AutomatonBuiltInJobs.FARMER));
+        assertTrue(AutomataAPI.getJob(AutomatonBuiltInJobs.DEFEND).isCombat());
+        assertEquals(2, AutomataAPI.getJob(AutomatonBuiltInJobs.DEFEND).getDecisionIntervalTicks());
+        assertEquals("automata.job.automata.mine.name", AutomataAPI.getJob(AutomatonBuiltInJobs.MINE).getTitleKey());
+        assertThrows(IllegalArgumentException.class, () -> AutomataAPI.requireInternalContext(null));
     }
 
     @Test
@@ -84,6 +88,11 @@ class AutomatonJobRegistryTest {
     }
 
     private static final class DummyJob implements IAutomatonJob {
+
+        @Override
+        public ResourceLocation getJobId() {
+            return new ResourceLocation("addon", "dummy");
+        }
 
         @Override
         public void tick(IAutomatonContext ctx) {

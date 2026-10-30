@@ -48,8 +48,10 @@ public final class AutomatonTeleportHandler {
     public static void installTabSupport(FMLServerStartingEvent event) {
         ICommandManager manager = event.getServer().getCommandManager();
         Map<String, ICommand> commands = manager.getCommands();
-        wrapIfPresent(event, commands, "tp");
-        wrapIfPresent(event, commands, "teleport");
+        List<String> keys = new ArrayList<>(commands.keySet());
+        for (String name : keys) {
+            wrapIfPresent(event, commands, name);
+        }
     }
 
     private static void wrapIfPresent(FMLServerStartingEvent event, Map<String, ICommand> commands, String name) {
@@ -60,16 +62,17 @@ public final class AutomatonTeleportHandler {
     }
 
     public static List<String> filterDotBotSuggestions(List<String> botNames, String[] args) {
-        if (args.length < 1 || args.length > 2 || botNames.isEmpty()) {
+        if (args.length < 1 || botNames.isEmpty()) {
             return Collections.emptyList();
         }
-        List<String> dotTokens = new ArrayList<>(botNames.size());
+        List<String> suggestions = new ArrayList<>(botNames.size() + 1);
+        suggestions.add("@at");
         for (String name : botNames) {
             if (name != null && !name.isEmpty()) {
-                dotTokens.add("." + name);
+                suggestions.add("." + name);
             }
         }
-        return CommandBase.getListOfStringsMatchingLastWord(args, dotTokens);
+        return CommandBase.getListOfStringsMatchingLastWord(args, suggestions);
     }
 
     private static List<String> collectNamedBotTokens(MinecraftServer server) {
@@ -115,9 +118,6 @@ public final class AutomatonTeleportHandler {
 
     @SubscribeEvent(priority = EventPriority.HIGH)
     public static void onCommand(CommandEvent event) {
-        if (!isTeleportCommand(event.getCommand())) {
-            return;
-        }
         String[] args = event.getParameters();
         if (!hasDotBotToken(args)) {
             return;
@@ -129,6 +129,19 @@ public final class AutomatonTeleportHandler {
         }
 
         ICommandSender sender = event.getSender();
+        if (!isTeleportCommand(event.getCommand())) {
+            try {
+                String[] rewritten = rewriteDotBotArgsToUuid(server, sender, args);
+                if (rewritten != null) {
+                    event.setParameters(rewritten);
+                }
+            } catch (CommandException ex) {
+                event.setCanceled(true);
+                sendError(sender, ex.getMessage());
+            }
+            return;
+        }
+
         event.setCanceled(true);
 
         if (!event.getCommand().checkPermission(server, sender)) {
@@ -143,6 +156,23 @@ public final class AutomatonTeleportHandler {
         }
     }
 
+    @Nullable
+    static String[] rewriteDotBotArgsToUuid(MinecraftServer server, ICommandSender sender, String[] args)
+            throws CommandException {
+        String[] copy = null;
+        for (int i = 0; i < args.length; i++) {
+            String botName = parseDotBotName(args[i]);
+            if (botName != null) {
+                Entity bot = resolveDotOrEntity(server, sender, args[i]);
+                if (copy == null) {
+                    copy = args.clone();
+                }
+                copy[i] = bot.getUniqueID().toString();
+            }
+        }
+        return copy;
+    }
+
     private static void executeDotTeleport(MinecraftServer server, ICommandSender sender, String[] args)
             throws CommandException {
         if (args.length == 1) {
@@ -155,34 +185,50 @@ public final class AutomatonTeleportHandler {
         }
 
         if (args.length == 2) {
-            Entity source = resolveDotOrEntity(server, sender, args[0]);
+            List<Entity> sources = resolveDotOrEntities(server, sender, args[0]);
             Entity dest = resolveDotOrEntity(server, sender, args[1]);
-            teleportToEntity(source, dest);
+            for (Entity source : sources) {
+                teleportToEntity(source, dest);
+            }
+            String label = sources.size() == 1 ? sources.get(0).getName() : sources.size() + " entities";
             sender.sendMessage(new TextComponentString(
-                    "Teleported " + source.getName() + " to " + dest.getName()));
+                    "Teleported " + label + " to " + dest.getName()));
             return;
         }
 
         if (args.length >= 4) {
-            Entity target = resolveDotOrEntity(server, sender, args[0]);
-            CommandBase.CoordinateArg xArg = CommandBase.parseCoordinate(target.posX, args[1], true);
-            CommandBase.CoordinateArg yArg = CommandBase.parseCoordinate(target.posY, args[2], -4096, 4096, false);
-            CommandBase.CoordinateArg zArg = CommandBase.parseCoordinate(target.posZ, args[3], true);
-            float yaw = args.length >= 5
-                    ? (float) CommandBase.parseDouble(args[4])
-                    : target.rotationYaw;
-            float pitch = args.length >= 6
-                    ? MathHelper.clamp((float) CommandBase.parseDouble(args[5]), -90.0F, 90.0F)
-                    : target.rotationPitch;
+            List<Entity> targets = resolveDotOrEntities(server, sender, args[0]);
+            for (Entity target : targets) {
+                CommandBase.CoordinateArg xArg = CommandBase.parseCoordinate(target.posX, args[1], true);
+                CommandBase.CoordinateArg yArg = CommandBase.parseCoordinate(target.posY, args[2], -4096, 4096, false);
+                CommandBase.CoordinateArg zArg = CommandBase.parseCoordinate(target.posZ, args[3], true);
+                float yaw = args.length >= 5
+                        ? (float) CommandBase.parseDouble(args[4])
+                        : target.rotationYaw;
+                float pitch = args.length >= 6
+                        ? MathHelper.clamp((float) CommandBase.parseDouble(args[5]), -90.0F, 90.0F)
+                        : target.rotationPitch;
 
-            teleportToCoordinates(target, xArg.getResult(), yArg.getResult(), zArg.getResult(), yaw, pitch);
+                teleportToCoordinates(target, xArg.getResult(), yArg.getResult(), zArg.getResult(), yaw, pitch);
+            }
+            Entity first = targets.get(0);
+            String label = targets.size() == 1 ? first.getName() : targets.size() + " entities";
             sender.sendMessage(new TextComponentString(
                     String.format("Teleported %s to %.2f, %.2f, %.2f",
-                            target.getName(), xArg.getResult(), yArg.getResult(), zArg.getResult())));
+                            label, first.posX, first.posY, first.posZ)));
             return;
         }
 
         throw new CommandException("Usage: /tp .<name> | /tp <target> .<name> | /tp .<name> <x> <y> <z>");
+    }
+
+    private static List<Entity> resolveDotOrEntities(MinecraftServer server, ICommandSender sender, String token)
+            throws CommandException {
+        String dotName = parseDotBotName(token);
+        if (dotName != null) {
+            return Collections.singletonList(findAutomatonByDotName(server, sender, dotName));
+        }
+        return CommandBase.getEntityList(server, sender, token);
     }
 
     private static Entity resolveDotOrEntity(MinecraftServer server, ICommandSender sender, String token)
@@ -318,10 +364,18 @@ public final class AutomatonTeleportHandler {
                 String[] args,
                 @Nullable BlockPos targetPos) {
             List<String> base = new ArrayList<>(delegate.getTabCompletions(server, sender, args, targetPos));
-            List<String> botMatches = filterDotBotSuggestions(collectNamedBotTokens(server), args);
-            for (String match : botMatches) {
-                if (!base.contains(match)) {
-                    base.add(match);
+            if (args.length >= 1) {
+                String last = args[args.length - 1];
+                boolean wantsBotTab = last.startsWith(".")
+                        || last.startsWith("@")
+                        || delegate.isUsernameIndex(args, args.length - 1);
+                if (wantsBotTab) {
+                    List<String> botMatches = filterDotBotSuggestions(collectNamedBotTokens(server), args);
+                    for (String match : botMatches) {
+                        if (!base.contains(match)) {
+                            base.add(match);
+                        }
+                    }
                 }
             }
             return base;

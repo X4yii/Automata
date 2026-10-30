@@ -32,6 +32,11 @@ public class CommandAutomata extends CommandBase {
 
     @Override
     public void execute(MinecraftServer server, ICommandSender sender, String[] args) throws CommandException {
+        if (args.length >= 1 && "reload".equalsIgnoreCase(args[0])) {
+            com.x4yi.automata.ai.jobs.ModdedOreCatalog.reload();
+            sender.sendMessage(new TextComponentTranslation("commands.automata.reload.success"));
+            return;
+        }
         if (args.length < 1 || !"spawn".equalsIgnoreCase(args[0])) {
             throw new WrongUsageException(getUsage(sender));
         }

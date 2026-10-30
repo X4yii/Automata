@@ -24,6 +24,7 @@ import com.x4yi.automata.ai.jobs.FarmerJob;
 import com.x4yi.automata.ai.jobs.IdleJob;
 import com.x4yi.automata.ai.jobs.LumberjackJob;
 import com.x4yi.automata.ai.jobs.MineJob;
+import com.x4yi.automata.ai.jobs.RoamJob;
 import com.x4yi.automata.movement.HumanMovementController.MovementMood;
 
 /**
@@ -66,10 +67,16 @@ public final class AutomataAPI {
         MinecraftForge.EVENT_BUS.post(new AutomataJobRegisterEvent(JOB_REGISTRY));
     }
 
-    public static void engageTarget(IAutomatonContext ctx, EntityLivingBase target, boolean urgent) {
+    public static AutomatonAIContext requireInternalContext(@Nullable IAutomatonContext ctx) {
         if (ctx instanceof AutomatonAIContext internal) {
-            CombatJobSupport.engageTarget(internal, target, urgent);
+            return internal;
         }
+        throw new IllegalArgumentException(
+                "Expected internal AutomatonAIContext, got " + (ctx == null ? "null" : ctx.getClass().getName()));
+    }
+
+    public static void engageTarget(IAutomatonContext ctx, EntityLivingBase target, boolean urgent) {
+        CombatJobSupport.engageTarget(requireInternalContext(ctx), target, urgent);
     }
 
     public static void escortOwnerOrAnchor(
@@ -77,14 +84,11 @@ public final class AutomataAPI {
             @Nullable EntityPlayer owner,
             @Nullable BlockPos anchor,
             boolean urgent) {
-        if (ctx instanceof AutomatonAIContext internal) {
-            CombatJobSupport.escortOwnerOrAnchor(internal, owner, anchor, urgent);
-        }
+        CombatJobSupport.escortOwnerOrAnchor(requireInternalContext(ctx), owner, anchor, urgent);
     }
 
     public static boolean isValidCombatCandidate(IAutomatonContext ctx, EntityLivingBase candidate) {
-        return ctx instanceof AutomatonAIContext internal
-                && CombatJobSupport.isValidCombatCandidate(internal, candidate);
+        return CombatJobSupport.isValidCombatCandidate(requireInternalContext(ctx), candidate);
     }
 
     public static synchronized void ensureBuiltInsRegistered() {
@@ -93,84 +97,92 @@ public final class AutomataAPI {
         }
         registerBuiltIn(
                 AutomatonBuiltInJobs.IDLE,
-                "Idle / Follow",
-                "Stays near owner or holds position",
                 MovementMood.CHILL,
                 false,
+                false,
+                0,
                 null,
                 IdleJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.EXCAVATION,
-                "Excavation",
-                "Mines marked box top-to-bottom",
                 MovementMood.CHILL,
                 true,
-                stack -> stack.getItem() instanceof ItemTool || !stack.getItem().getToolClasses(stack).isEmpty(),
+                false,
+                0,
+                EquipmentSelector::isExcavationTool,
                 ExcavationJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.MINE,
-                "Mine",
-                "Mines exposed nearby ores only",
                 MovementMood.CHILL,
                 true,
-                stack -> stack.getItem() instanceof ItemTool || !stack.getItem().getToolClasses(stack).isEmpty(),
+                false,
+                0,
+                EquipmentSelector::isPickaxe,
                 MineJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.LUMBERJACK,
-                "Lumberjack",
-                "Chops trees and replants saplings",
                 MovementMood.CHILL,
                 true,
+                false,
+                0,
                 EquipmentSelector::isAxe,
                 LumberjackJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.FARMER,
-                "Farmer",
-                "Tills, plants, harvests crops",
                 MovementMood.CHILL,
                 true,
+                false,
+                0,
                 EquipmentSelector::isHoe,
                 FarmerJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.DEFEND,
-                "Defend",
-                "Guards owner/post with bow or melee",
                 MovementMood.TRYHARD,
                 false,
+                true,
+                2,
                 stack -> stack.getItem() instanceof ItemSword,
                 DefendJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.CRAZY_DEFEND,
-                "Crazy Defend",
-                "Aggressive pursuit & focus fire",
                 MovementMood.TRYHARD,
                 false,
+                true,
+                2,
                 stack -> stack.getItem() instanceof ItemSword,
                 CrazyDefendJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.COURIER,
-                "Courier",
-                "Moves items from Input to Output chests",
                 MovementMood.CHILL,
                 false,
+                false,
+                0,
                 null,
                 CourierJob::new);
+        registerBuiltIn(
+                AutomatonBuiltInJobs.ROAM,
+                MovementMood.CHILL,
+                false,
+                true,
+                2,
+                stack -> stack.getItem() instanceof ItemSword,
+                RoamJob::new);
         initialized = true;
     }
 
     private static void registerBuiltIn(
             ResourceLocation id,
-            String title,
-            String description,
             MovementMood mood,
             boolean logisticsEligible,
+            boolean combat,
+            int decisionIntervalTicks,
             @Nullable java.util.function.Predicate<ItemStack> toolMatcher,
             java.util.function.Supplier<com.x4yi.automata.ai.IAutomatonJob> factory) {
         JOB_REGISTRY.register(JobDescriptor.builder(id, factory)
-                .titleKey(title)
-                .descriptionKey(description)
                 .movementMood(mood)
                 .logisticsEligible(logisticsEligible)
+                .combat(combat)
+                .decisionIntervalTicks(decisionIntervalTicks)
                 .toolMatcher(toolMatcher)
                 .build());
     }
