@@ -1,6 +1,0 @@
-para{
-  "parent": "item/handheld",
-  "textures": {
-    "layer0": "minecraft:items/iron_sword"
-  }
-}

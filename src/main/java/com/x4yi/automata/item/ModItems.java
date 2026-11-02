@@ -16,23 +16,23 @@ import com.x4yi.automata.AutomataMod;
 @Mod.EventBusSubscriber(modid = AutomataMod.MOD_ID)
 public final class ModItems {
 
-    public static final ItemAutomatonTerminator AUTOMATON_TERMINATOR = new ItemAutomatonTerminator();
+    public static final ItemComidaConAlas COMIDA_CON_ALAS = new ItemComidaConAlas();
     public static final ItemAutomaStaff AUTOMA_STAFF = new ItemAutomaStaff();
 
     private ModItems() {}
 
     @SubscribeEvent
     public static void registerItems(RegistryEvent.Register<Item> event) {
-        event.getRegistry().registerAll(AUTOMATON_TERMINATOR, AUTOMA_STAFF);
+        event.getRegistry().registerAll(COMIDA_CON_ALAS, AUTOMA_STAFF);
     }
 
     @SideOnly(Side.CLIENT)
     @SubscribeEvent
     public static void registerModels(ModelRegistryEvent event) {
         ModelLoader.setCustomModelResourceLocation(
-                AUTOMATON_TERMINATOR,
+                COMIDA_CON_ALAS,
                 0,
-                new ModelResourceLocation(AUTOMATON_TERMINATOR.getRegistryName(), "inventory"));
+                new ModelResourceLocation(COMIDA_CON_ALAS.getRegistryName(), "inventory"));
         ModelLoader.setCustomModelResourceLocation(
                 AUTOMA_STAFF,
                 0,
