@@ -52,6 +52,17 @@ public class RenderAutomaton extends RenderBiped<EntityAutomaton> {
 
     private static final float PLAYER_RENDER_SCALE = 0.9375F;
     private static final float AUTOMATON_RENDER_SCALE = PLAYER_RENDER_SCALE;
+    private static final java.lang.reflect.Method AQUA_SET_SWIM_ANIMATION = resolveAquaSwimMethod();
+
+    @Nullable
+    private static java.lang.reflect.Method resolveAquaSwimMethod() {
+        try {
+            Class<?> iface = Class.forName("com.fuzs.aquaacrobatics.client.model.IModelBipedSwimming");
+            return iface.getMethod("setSwimAnimation", float.class);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
 
     private final ModelPlayer steveModel = new ModelPlayer(0.0F, false);
     private final ModelPlayer alexModel = new ModelPlayer(0.0F, true);
@@ -67,6 +78,12 @@ public class RenderAutomaton extends RenderBiped<EntityAutomaton> {
         ModelPlayer model = entity.isSlimModel() ? alexModel : steveModel;
         this.mainModel = model;
         setModelVisibilities(entity, model);
+        if (AQUA_SET_SWIM_ANIMATION != null && AQUA_SET_SWIM_ANIMATION.getDeclaringClass().isInstance(model)) {
+            try {
+                AQUA_SET_SWIM_ANIMATION.invoke(model, entity.getSwimAnimation(partialTicks));
+            } catch (Throwable ignored) {
+            }
+        }
         double renderY = entity.isSneaking() ? y - 0.125D : y;
         super.doRender(entity, x, renderY, z, entityYaw, partialTicks);
         if (entity.getNeededTool() != EntityAutomaton.NEEDED_TOOL_NONE) {
@@ -189,6 +206,16 @@ public class RenderAutomaton extends RenderBiped<EntityAutomaton> {
             GlStateManager.translate(0.0F, 0.12F, 0.0F);
             GlStateManager.rotate(90.0F, 1.0F, 0.0F, 0.0F);
             GlStateManager.translate(0.0F, -0.75F, 0.0F);
+            return;
+        }
+        float swimAnim = entityLiving.getSwimAnimation(partialTicks);
+        if (swimAnim > 0.0F) {
+            float pitch = entityLiving.isInWater() ? -90.0F - entityLiving.rotationPitch : -90.0F;
+            float angle = pitch * swimAnim;
+            GlStateManager.rotate(angle, 1.0F, 0.0F, 0.0F);
+            if (entityLiving.isSwimming()) {
+                GlStateManager.translate(0.0F, -1.0F, 0.3F);
+            }
         }
     }
 

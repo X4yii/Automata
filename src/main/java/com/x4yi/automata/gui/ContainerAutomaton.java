@@ -214,7 +214,11 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
                 }
                 if (selectedJob != null) {
                     cfg.setJobId(selectedJob.getId());
-                    UINetwork.sendToast(sender, "Automata", "Job: " + selectedJob.getTitleKey(), 2.0F);
+                    UINetwork.sendToast(
+                            sender,
+                            "Automata",
+                            "Job: " + net.minecraft.util.text.translation.I18n.translateToLocal(selectedJob.getTitleKey()),
+                            2.0F);
                 }
                 break;
             case "automata:set_pos1_here":

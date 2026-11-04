@@ -177,7 +177,7 @@ public final class TasksLogisticsTabView {
             refreshSnapshot.run();
         }).withVariant(GuiButton.Variant.GHOST);
         btn.withPercentWidth(0.49F);
-        btn.withTooltip(job.getDescriptionKey());
+        btn.withTooltip(translateOrRaw(job.getDescriptionKey()));
         jobButtons.add(btn);
         return btn;
     }
@@ -240,6 +240,12 @@ public final class TasksLogisticsTabView {
     }
 
     public static String formatJobTitle(JobDescriptor job) {
-        return job == null ? "Idle" : job.getTitleKey();
+        return job == null ? "Idle" : translateOrRaw(job.getTitleKey());
+    }
+
+    private static String translateOrRaw(String key) {
+        return net.minecraft.client.resources.I18n.hasKey(key)
+                ? net.minecraft.client.resources.I18n.format(key)
+                : key;
     }
 }

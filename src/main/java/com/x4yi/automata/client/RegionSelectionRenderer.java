@@ -5,6 +5,9 @@
 
 package com.x4yi.automata.client;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 import javax.annotation.Nullable;
 
 import net.minecraft.client.Minecraft;
@@ -28,32 +31,52 @@ import com.x4yi.automata.item.ItemAutomaStaff;
 @Mod.EventBusSubscriber(modid = AutomataMod.MOD_ID, value = Side.CLIENT)
 public final class RegionSelectionRenderer {
 
-    private static int configuredEntityId = -1;
-    @Nullable
-    private static BlockPos configuredMin;
-    @Nullable
-    private static BlockPos configuredMax;
+    public static final class ZoneBounds {
+        public final BlockPos min;
+        public final BlockPos max;
+
+        ZoneBounds(BlockPos min, BlockPos max) {
+            this.min = min;
+            this.max = max;
+        }
+    }
+
+    private static final Map<Integer, ZoneBounds> CONFIGURED_ZONES = new ConcurrentHashMap<>();
+    private static int activeEntityId = -1;
 
     private RegionSelectionRenderer() {}
 
     public static void setLastConfiguredZone(int entityId, @Nullable BlockPos p1, @Nullable BlockPos p2) {
+        if (entityId < 0) {
+            return;
+        }
         if (p1 == null || p2 == null) {
-            if (configuredEntityId == entityId) {
-                configuredEntityId = -1;
-                configuredMin = null;
-                configuredMax = null;
+            CONFIGURED_ZONES.remove(entityId);
+            if (activeEntityId == entityId) {
+                activeEntityId = -1;
             }
             return;
         }
-        configuredEntityId = entityId;
-        configuredMin = new BlockPos(
+        BlockPos min = new BlockPos(
                 Math.min(p1.getX(), p2.getX()),
                 Math.min(p1.getY(), p2.getY()),
                 Math.min(p1.getZ(), p2.getZ()));
-        configuredMax = new BlockPos(
+        BlockPos max = new BlockPos(
                 Math.max(p1.getX(), p2.getX()),
                 Math.max(p1.getY(), p2.getY()),
                 Math.max(p1.getZ(), p2.getZ()));
+        CONFIGURED_ZONES.put(entityId, new ZoneBounds(min, max));
+        activeEntityId = entityId;
+    }
+
+    @Nullable
+    public static ZoneBounds getConfiguredZone(int entityId) {
+        return CONFIGURED_ZONES.get(entityId);
+    }
+
+    public static void clearAllZones() {
+        CONFIGURED_ZONES.clear();
+        activeEntityId = -1;
     }
 
     @SubscribeEvent
@@ -89,8 +112,19 @@ public final class RegionSelectionRenderer {
             }
         }
 
-        if (configuredMin != null && configuredMax != null && player.getDistanceSqToCenter(configuredMin) <= 4096.0D) {
-            drawBox(camX, camY, camZ, configuredMin, configuredMax, 1.2F, 0.78F, 0.84F, 0.90F, 0.32F);
+        for (Map.Entry<Integer, ZoneBounds> entry : CONFIGURED_ZONES.entrySet()) {
+            ZoneBounds bounds = entry.getValue();
+            if (player.getDistanceSqToCenter(bounds.min) <= 4096.0D) {
+                boolean isFocused = entry.getKey() == activeEntityId;
+                drawBox(
+                        camX, camY, camZ,
+                        bounds.min, bounds.max,
+                        isFocused ? 1.5F : 1.0F,
+                        isFocused ? 0.38F : 0.78F,
+                        isFocused ? 0.65F : 0.84F,
+                        isFocused ? 0.98F : 0.90F,
+                        isFocused ? 0.45F : 0.24F);
+            }
         }
     }
 
