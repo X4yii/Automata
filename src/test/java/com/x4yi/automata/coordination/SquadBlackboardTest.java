@@ -113,5 +113,19 @@ class SquadBlackboardTest {
         board.pruneExpired(130L);
         assertFalse(board.isDownedBeingRevivedByOther(11, 20, 130L));
     }
+
+    @Test
+    void findNearestDownedRespectsMaxDistanceAndActiveReviver() {
+        SquadBlackboard board = new SquadBlackboard();
+        BlockPos self = new BlockPos(0, 64, 0);
+        board.reportDowned(2, new BlockPos(100, 64, 0), 10L);
+        assertTrue(board.findNearestDowned(1, self, 10L) == null);
+
+        board.reportDowned(3, new BlockPos(10, 64, 0), 10L);
+        assertEquals(3, board.findNearestDowned(1, self, 10L).getKey());
+
+        board.reportReviveInProgress(4, 3, new BlockPos(10, 64, 0), 10L);
+        assertTrue(board.findNearestDowned(1, self, 12L) == null);
+    }
 }
 

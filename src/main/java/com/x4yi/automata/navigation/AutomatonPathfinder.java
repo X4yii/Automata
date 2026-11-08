@@ -25,6 +25,11 @@ public final class AutomatonPathfinder {
     private static final float COST_EDGE_HAZARD_PENALTY = 0.4F;
     private static final float COST_WATER_PENALTY = 5.5F;
     private static final float HEURISTIC_WEIGHT = 1.05F;
+    private static final int[][] DIAG_PARKOUR_OFFSETS = {
+            {2, 1}, {2, -1}, {-2, 1}, {-2, -1},
+            {1, 2}, {1, -2}, {-1, 2}, {-1, -2},
+            {2, 2}, {2, -2}, {-2, 2}, {-2, -2}
+    };
 
     private static final ThreadLocal<ScratchBuffers> SCRATCH =
             ThreadLocal.withInitial(() -> new ScratchBuffers(PathfindingSettings.DEFAULT_MAX_NODES));
@@ -41,24 +46,7 @@ public final class AutomatonPathfinder {
             int goalZ,
             PathfindingSettings settings,
             @Nullable AtomicBoolean cancelled) {
-        if (!settings.allowBreakThrough()) {
-            return runSinglePass(world, startX, startY, startZ, goalX, goalY, goalZ, settings, cancelled);
-        }
-        PathfindingSettings nonDestructive = new PathfindingSettings(
-                false,
-                settings.allowSprintJump(),
-                settings.allowScaffolding(),
-                settings.maxExpandedNodes(),
-                settings.maxFallDistance());
-        PathResult phase1 = runSinglePass(world, startX, startY, startZ, goalX, goalY, goalZ, nonDestructive, cancelled);
-        if (phase1.isComplete() || (cancelled != null && cancelled.get())) {
-            return phase1;
-        }
-        PathResult phase2 = runSinglePass(world, startX, startY, startZ, goalX, goalY, goalZ, settings, cancelled);
-        if (phase2.isComplete()) {
-            return phase2;
-        }
-        return !phase1.isEmpty() ? phase1 : phase2;
+        return runSinglePass(world, startX, startY, startZ, goalX, goalY, goalZ, settings, cancelled);
     }
 
     private static PathResult runSinglePass(
@@ -143,6 +131,10 @@ public final class AutomatonPathfinder {
             int goalX,
             int goalY,
             int goalZ) {
+        boolean canScaffoldMore = settings.allowScaffolding()
+                && (settings.availableScaffoldBlocks() == Integer.MAX_VALUE
+                        || countScaffoldUsed(buf.table, parentKey) < settings.availableScaffoldBlocks());
+
         for (int dir = 0; dir < 4; dir++) {
             int dx = CARDINAL_DX[dir];
             int dz = CARDINAL_DZ[dir];
@@ -167,7 +159,7 @@ public final class AutomatonPathfinder {
                     int drop = cy - landY;
                     float fallCost = COST_CARDINAL + drop * COST_FALL_PER_BLOCK;
                     offerNode(world, buf, parentKey, nx, landY, nz, currentG + fallCost, PathNodeAction.FALL, goalX, goalY, goalZ);
-                } else if (settings.allowScaffolding()
+                } else if (canScaffoldMore
                         && world.getCellType(nx, cy - 1, nz) != BlockCellType.HAZARD) {
                     offerNode(world, buf, parentKey, nx, cy, nz, currentG + COST_BRIDGE, PathNodeAction.BRIDGE, goalX, goalY, goalZ);
                 }
@@ -184,7 +176,16 @@ public final class AutomatonPathfinder {
             tryDiagonalParkourJumps(world, buf, parentKey, cx, cy, cz, currentG, goalX, goalY, goalZ);
         }
 
-        if (settings.allowScaffolding()
+        if (world.isWater(cx, cy, cz)) {
+            if (world.isPassable(cx, cy + 1, cz) && world.isWater(cx, cy + 1, cz)) {
+                offerNode(world, buf, parentKey, cx, cy + 1, cz, currentG + COST_JUMP_UP, PathNodeAction.JUMP, goalX, goalY, goalZ);
+            }
+            if (world.isPassable(cx, cy - 1, cz) && world.isWater(cx, cy - 1, cz)) {
+                offerNode(world, buf, parentKey, cx, cy - 1, cz, currentG + COST_FALL_PER_BLOCK, PathNodeAction.FALL, goalX, goalY, goalZ);
+            }
+        }
+
+        if (canScaffoldMore
                 && world.isPassable(cx, cy + 1, cz)
                 && world.isPassable(cx, cy + 2, cz)
                 && world.getCellType(cx, cy, cz) != BlockCellType.HAZARD) {
@@ -206,6 +207,7 @@ public final class AutomatonPathfinder {
             int goalY,
             int goalZ) {
         if (goalY > cy
+                && isBreakableCell(world, cx, cy + 2, cz)
                 && isBreakableCell(world, nx, cy + 1, nz)
                 && isBreakableCell(world, nx, cy + 2, nz)
                 && world.isSolidSupport(nx, cy, nz)) {
@@ -230,7 +232,9 @@ public final class AutomatonPathfinder {
             return false;
         }
         byte cell = world.getCellType(x, y, z);
-        return cell != BlockCellType.HAZARD && cell != BlockCellType.UNLOADED;
+        return cell != BlockCellType.HAZARD
+                && cell != BlockCellType.UNLOADED
+                && cell != BlockCellType.UNBREAKABLE;
     }
 
     private static void trySprintJump(
@@ -309,12 +313,7 @@ public final class AutomatonPathfinder {
         if (!world.isPassable(cx, cy + 2, cz)) {
             return;
         }
-        int[][] diagOffsets = {
-                {2, 1}, {2, -1}, {-2, 1}, {-2, -1},
-                {1, 2}, {1, -2}, {-1, 2}, {-1, -2},
-                {2, 2}, {2, -2}, {-2, 2}, {-2, -2}
-        };
-        for (int[] off : diagOffsets) {
+        for (int[] off : DIAG_PARKOUR_OFFSETS) {
             int ox = off[0];
             int oz = off[1];
             int midX = cx + Integer.signum(ox);
@@ -390,9 +389,13 @@ public final class AutomatonPathfinder {
     }
 
     private static boolean canSwimAt(INavigationWorldView world, int cx, int cy, int cz, int nx, int ny, int nz) {
-        return (world.isWater(cx, cy, cz) || world.isWater(cx, cy - 1, cz) || world.isWater(nx, ny, nz) || world.isWater(nx, ny - 1, nz))
-                && (world.isWater(nx, ny, nz) || world.isWater(nx, ny - 1, nz))
-                && hasBodyClearance(world, nx, ny, nz);
+        if (!(world.isWater(cx, cy, cz) || world.isWater(cx, cy - 1, cz) || world.isWater(nx, ny, nz) || world.isWater(nx, ny - 1, nz))) {
+            return false;
+        }
+        if (world.isWater(nx, ny, nz)) {
+            return world.isPassable(nx, ny, nz);
+        }
+        return world.isWater(nx, ny - 1, nz) && hasBodyClearance(world, nx, ny, nz);
     }
 
     private static boolean hasBodyClearance(INavigationWorldView world, int x, int y, int z) {
@@ -406,7 +409,7 @@ public final class AutomatonPathfinder {
             if (cell == BlockCellType.HAZARD || cell == BlockCellType.UNLOADED || cell == BlockCellType.TALL_OBSTACLE) {
                 return Integer.MIN_VALUE;
             }
-            if (cell == BlockCellType.SOLID) {
+            if (cell == BlockCellType.SOLID || cell == BlockCellType.UNBREAKABLE) {
                 return y + 1;
             }
         }
@@ -428,11 +431,15 @@ public final class AutomatonPathfinder {
         if (ny < 0 || ny > 255) {
             return;
         }
+        float dirPenalty = directionPenalty(buf, parentKey, nx, nz);
+        if (action == PathNodeAction.BREAK_THROUGH && dirPenalty > 0.0F) {
+            dirPenalty += 2.0F;
+        }
         float adjustedG = tentativeG
-                + directionPenalty(buf, parentKey, nx, nz)
+                + dirPenalty
                 + edgeHazardPenalty(world, nx, ny, nz)
                 + enclosedPenalty(world, nx, ny, nz)
-                + waterPenalty(world, nx, ny, nz);
+                + waterPenalty(world, parentKey, nx, ny, nz, goalX, goalY, goalZ);
         long key = PackedPos.pack(nx, ny, nz);
         int slot = buf.table.findSlot(key);
         if (slot >= 0) {
@@ -446,6 +453,27 @@ public final class AutomatonPathfinder {
         buf.table.putOrUpdate(key, parentKey, adjustedG, action, PrimitiveNodeTable.STATE_OPEN);
         float fScore = adjustedG + heuristic(nx, ny, nz, goalX, goalY, goalZ) * HEURISTIC_WEIGHT;
         buf.heap.push(key, fScore);
+    }
+
+    private static int countScaffoldUsed(PrimitiveNodeTable table, long nodeKey) {
+        int used = 0;
+        long cur = nodeKey;
+        for (int guard = 0; guard < 256; guard++) {
+            int slot = table.findSlot(cur);
+            if (slot < 0) {
+                break;
+            }
+            byte act = table.getAction(slot);
+            if (act == PathNodeAction.BRIDGE || act == PathNodeAction.PILLAR_UP) {
+                used++;
+            }
+            long parent = table.getParent(slot);
+            if (parent == cur) {
+                break;
+            }
+            cur = parent;
+        }
+        return used;
     }
 
     private static float directionPenalty(ScratchBuffers buf, long parentKey, int nx, int nz) {
@@ -491,8 +519,24 @@ public final class AutomatonPathfinder {
         return world.isPassable(nx, ny + 2, nz) ? 0.0F : COST_ENCLOSED_STEP;
     }
 
-    private static float waterPenalty(INavigationWorldView world, int nx, int ny, int nz) {
-        return (world.isWater(nx, ny, nz) || world.isWater(nx, ny - 1, nz)) ? COST_WATER_PENALTY : 0.0F;
+    private static float waterPenalty(
+            INavigationWorldView world,
+            long parentKey,
+            int nx,
+            int ny,
+            int nz,
+            int goalX,
+            int goalY,
+            int goalZ) {
+        if (!(world.isWater(nx, ny, nz) || world.isWater(nx, ny - 1, nz))) {
+            return 0.0F;
+        }
+        int px = PackedPos.unpackX(parentKey);
+        int py = PackedPos.unpackY(parentKey);
+        int pz = PackedPos.unpackZ(parentKey);
+        boolean alreadyInWater = world.isWater(px, py, pz) || world.isWater(px, py - 1, pz);
+        boolean goalInWater = world.isWater(goalX, goalY, goalZ) || world.isWater(goalX, goalY - 1, goalZ);
+        return (alreadyInWater || goalInWater) ? 1.0F : COST_WATER_PENALTY;
     }
 
     private static float heuristic(int x, int y, int z, int gx, int gy, int gz) {

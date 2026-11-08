@@ -64,21 +64,32 @@ public class SquadBlackboard {
         downedAllies.remove(entityId);
     }
 
+    private static final double MAX_DOWNED_SEARCH_DIST_SQ = 4096.0D;
+
     @Nullable
     public Map.Entry<Integer, BlockPos> findNearestDowned(int selfEntityId, BlockPos selfPos) {
+        return findNearestDowned(selfEntityId, selfPos, -1L);
+    }
+
+    @Nullable
+    public Map.Entry<Integer, BlockPos> findNearestDowned(int selfEntityId, BlockPos selfPos, long worldTime) {
         int bestId = -1;
         BlockPos bestPos = null;
-        double bestDistSq = Double.MAX_VALUE;
+        double bestDistSq = MAX_DOWNED_SEARCH_DIST_SQ;
 
         for (Map.Entry<Integer, DownedAlert> entry : downedAllies.entrySet()) {
-            if (entry.getKey() == selfEntityId) {
+            int candidateId = entry.getKey();
+            if (candidateId == selfEntityId) {
+                continue;
+            }
+            if (worldTime >= 0L && isDownedBeingRevivedByOther(selfEntityId, candidateId, worldTime)) {
                 continue;
             }
             BlockPos pos = entry.getValue().pos;
             double distSq = selfPos.distanceSq(pos);
-            if (distSq < bestDistSq) {
+            if (distSq <= bestDistSq) {
                 bestDistSq = distSq;
-                bestId = entry.getKey();
+                bestId = candidateId;
                 bestPos = pos;
             }
         }
