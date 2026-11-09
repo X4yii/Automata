@@ -28,7 +28,11 @@ class UtilityBrainArbiterTest {
         assertEquals(BrainBehavior.SEEK_LOOT,
                 UtilityBrainArbiter.selectBestBehavior(idleWithLoot, BrainBehavior.ACTIVE_JOB));
 
-        UtilityState borderlineLogistics = new UtilityState(false, false, false, false, false, true, 0.65F, true);
+        UtilityState borderlineLogistics = UtilityState.builder()
+                .logisticsReady(true)
+                .inventoryOccupancy(0.65F)
+                .hasActiveCommittedJob(true)
+                .build();
         assertEquals(BrainBehavior.LOGISTICS,
                 UtilityBrainArbiter.selectBestBehavior(borderlineLogistics, BrainBehavior.LOGISTICS));
     }

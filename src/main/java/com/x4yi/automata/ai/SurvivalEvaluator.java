@@ -41,14 +41,105 @@ public final class SurvivalEvaluator {
     private static final long REVIVE_CHANNEL_TICKS = 40L;
     private static final double REVIVER_GUARD_SCAN_RADIUS = 16.0D;
     private static final double REVIVER_GUARD_RANGE_SQ = 12.25D;
+    private static final int LOW_AIR_THRESHOLD = 120;
 
     private SurvivalEvaluator() {}
 
+    public static boolean isImmediateHazard(EntityAutomaton bot) {
+        return bot.isInLava()
+                || bot.isBurning()
+                || bot.posY < 0.0D
+                || (bot.isInWater() && bot.getAir() < LOW_AIR_THRESHOLD);
+    }
+
+    public static boolean tickVoidRescue20Hz(AutomatonAIContext ctx) {
+        EntityAutomaton bot = ctx.getAutomaton();
+        if (bot.posY >= 0.0D) {
+            if (bot.onGround && bot.posY >= 1.0D && !bot.isInLava() && !bot.isInWater()) {
+                ctx.recordSafePos(bot.getPosition());
+            }
+            return false;
+        }
+        return rescueFromVoid(ctx, bot);
+    }
+
+    private static boolean rescueFromVoid(AutomatonAIContext ctx, EntityAutomaton bot) {
+        WorldServer world = ctx.getWorld();
+        BlockPos destination = null;
+        if (bot.getOwnerUuid() != null && world.getMinecraftServer() != null) {
+            net.minecraft.entity.player.EntityPlayerMP owner =
+                    world.getMinecraftServer().getPlayerList().getPlayerByUUID(bot.getOwnerUuid());
+            if (owner != null && owner.isEntityAlive()
+                    && owner.world.provider.getDimension() == world.provider.getDimension()) {
+                destination = findSafeSpotNear(world, owner.getPosition(), 3, 2);
+                if (destination == null) {
+                    destination = owner.getPosition();
+                }
+            }
+        }
+        if (destination == null) {
+            destination = ctx.getLastSafePos();
+        }
+        if (destination != null) {
+            bot.fallDistance = 0.0F;
+            bot.motionX = 0.0D;
+            bot.motionY = 0.0D;
+            bot.motionZ = 0.0D;
+            ctx.stopNavigation();
+            bot.setPositionAndUpdate(destination.getX() + 0.5D, destination.getY(), destination.getZ() + 0.5D);
+            bot.playSound(net.minecraft.init.SoundEvents.ENTITY_ENDERMEN_TELEPORT, 0.8F, 1.0F);
+            return true;
+        }
+        return false;
+    }
+
+    @Nullable
+    private static BlockPos findSafeSpotNear(WorldServer world, BlockPos center, int radiusXZ, int radiusY) {
+        BlockPos best = null;
+        double bestDistSq = Double.MAX_VALUE;
+        for (int dy = -radiusY; dy <= radiusY; dy++) {
+            for (int dx = -radiusXZ; dx <= radiusXZ; dx++) {
+                for (int dz = -radiusXZ; dz <= radiusXZ; dz++) {
+                    BlockPos candidate = center.add(dx, dy, dz);
+                    if (candidate.getY() < 1 || candidate.getY() > 254 || !world.isBlockLoaded(candidate)) {
+                        continue;
+                    }
+                    if (!world.getBlockState(candidate.down()).getMaterial().blocksMovement()) {
+                        continue;
+                    }
+                    if (world.getBlockState(candidate).getMaterial().blocksMovement()
+                            || world.getBlockState(candidate.up()).getMaterial().blocksMovement()) {
+                        continue;
+                    }
+                    Material feetMat = world.getBlockState(candidate).getMaterial();
+                    if (feetMat == Material.LAVA || feetMat == Material.FIRE) {
+                        continue;
+                    }
+                    double dSq = candidate.distanceSq(center);
+                    if (dSq < bestDistSq) {
+                        bestDistSq = dSq;
+                        best = candidate;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
     public static boolean handleSurvival(AutomatonAIContext ctx) {
         EntityAutomaton bot = ctx.getAutomaton();
+        if (bot.posY < 0.0D) {
+            ctx.resetReviveChannel();
+            return rescueFromVoid(ctx, bot);
+        }
         if (bot.isInLava() || bot.isBurning()) {
             ctx.resetReviveChannel();
             escapeHazard(ctx, bot.getPosition());
+            return true;
+        }
+        if (bot.isInWater() && bot.getAir() < LOW_AIR_THRESHOLD) {
+            ctx.resetReviveChannel();
+            swimToAirSurface(ctx, bot);
             return true;
         }
 
@@ -129,22 +220,25 @@ public final class SurvivalEvaluator {
                 board.clearDowned(downed.getKey());
             }
         }
-        List<EntityAutomaton> nearby = bot.world.getEntitiesWithinAABB(
-                EntityAutomaton.class,
-                bot.getEntityBoundingBox().grow(REVIVE_SCAN_RADIUS),
-                candidate -> candidate != null
-                        && candidate != bot
-                        && candidate.isEntityAlive()
-                        && candidate.isDowned()
-                        && (bot.getOwnerUuid() == null || bot.getOwnerUuid().equals(candidate.getOwnerUuid())));
+        List<net.minecraft.entity.EntityLivingBase> nearby = ctx.getNearbyLivingEntities(REVIVE_SCAN_RADIUS);
         EntityAutomaton best = null;
         double bestDistSq = Double.MAX_VALUE;
-        for (EntityAutomaton candidate : nearby) {
+        double maxDistSq = REVIVE_SCAN_RADIUS * REVIVE_SCAN_RADIUS;
+        for (net.minecraft.entity.EntityLivingBase entity : nearby) {
+            if (!(entity instanceof EntityAutomaton candidate)
+                    || candidate == bot
+                    || !candidate.isEntityAlive()
+                    || !candidate.isDowned()) {
+                continue;
+            }
+            if (bot.getOwnerUuid() != null && !bot.getOwnerUuid().equals(candidate.getOwnerUuid())) {
+                continue;
+            }
             if (coop && board.isDownedBeingRevivedByOther(bot.getEntityId(), candidate.getEntityId(), now)) {
                 continue;
             }
             double dSq = bot.getDistanceSq(candidate);
-            if (dSq < bestDistSq) {
+            if (dSq <= maxDistSq && dSq < bestDistSq) {
                 bestDistSq = dSq;
                 best = candidate;
             }
@@ -177,17 +271,7 @@ public final class SurvivalEvaluator {
     }
 
     private static Entity findImminentExplosive(EntityAutomaton bot) {
-        AxisAlignedBB box = bot.getEntityBoundingBox().grow(DANGER_SCAN_RADIUS);
-        List<Entity> nearby = bot.world.getEntitiesWithinAABBExcludingEntity(bot, box);
-        for (Entity entity : nearby) {
-            if (entity instanceof EntityTNTPrimed) {
-                return entity;
-            }
-            if (entity instanceof EntityCreeper creeper && creeper.getCreeperState() > 0) {
-                return creeper;
-            }
-        }
-        return null;
+        return ExplosiveHazardDetector.findNearestExplosive(bot, DANGER_SCAN_RADIUS);
     }
 
     public static void tickLavaEscape20Hz(AutomatonAIContext ctx) {
@@ -208,6 +292,43 @@ public final class SurvivalEvaluator {
             bot.motionY = 0.25D;
         }
         bot.getJumpHelper().setJumping();
+    }
+
+    private static void swimToAirSurface(AutomatonAIContext ctx, EntityAutomaton bot) {
+        bot.getJumpHelper().setJumping();
+        if (bot.motionY < 0.18D) {
+            bot.motionY = 0.18D;
+        }
+        WorldServer world = ctx.getWorld();
+        BlockPos origin = bot.getPosition();
+        BlockPos bestAir = null;
+        double bestDistSq = Double.MAX_VALUE;
+        for (int dy = 0; dy <= 6; dy++) {
+            for (int dx = -4; dx <= 4; dx++) {
+                for (int dz = -4; dz <= 4; dz++) {
+                    BlockPos pos = origin.add(dx, dy, dz);
+                    if (pos.getY() < 1 || pos.getY() > 254 || !world.isBlockLoaded(pos)) {
+                        continue;
+                    }
+                    Material m = world.getBlockState(pos).getMaterial();
+                    if (m == Material.AIR && !world.getBlockState(pos.up()).getMaterial().blocksMovement()) {
+                        double dSq = pos.distanceSq(origin);
+                        if (dSq < bestDistSq) {
+                            bestDistSq = dSq;
+                            bestAir = pos;
+                        }
+                    }
+                }
+            }
+            if (bestAir != null) {
+                break;
+            }
+        }
+        if (bestAir != null) {
+            ctx.requestPathTo(bestAir, true);
+        } else {
+            ctx.requestPathTo(new BlockPos(origin.getX(), Math.min(254, origin.getY() + 6), origin.getZ()), true);
+        }
     }
 
     static HazardResponse classifyHazardResponse(boolean inLava, boolean hasWaterNearby, boolean hasShadeNearby) {

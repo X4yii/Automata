@@ -60,6 +60,8 @@ final class MeleeCombatController {
             ctx.getMovement().applyDirectStrafe(1.0F, state.strafeDir * 0.25F, 1.0F);
             if (bot.onGround) {
                 bot.getJumpHelper().setJumping();
+            } else if (bot.isInWater() && target.posY > bot.posY + 0.6D) {
+                bot.getJumpHelper().setJumping();
             }
         } else {
             float[] input = CombatJobSupport.computeCombatStrafeInput(distSq, false, false, false, state.strafeDir);
@@ -287,6 +289,10 @@ final class MeleeCombatController {
     }
 
     static void equipShieldIfAvailable(EntityAutomaton bot) {
+        if (com.x4yi.automata.compat.SpartanWeaponryCompat.isTwoHanded(bot.getHeldItemMainhand())) {
+            unequipOffhandForTwoHanded(bot);
+            return;
+        }
         if (EquipmentSelector.isShieldItem(bot.getHeldItemOffhand())) {
             return;
         }
@@ -302,6 +308,22 @@ final class MeleeCombatController {
                 }
                 return;
             }
+        }
+    }
+
+    static void unequipOffhandForTwoHanded(EntityAutomaton bot) {
+        ItemStack off = bot.getHeldItemOffhand();
+        if (off.isEmpty()) {
+            return;
+        }
+        if (bot.isHandActive() && bot.getActiveHand() == EnumHand.OFF_HAND) {
+            bot.resetActiveHand();
+        }
+        ItemStack remainder = net.minecraftforge.items.ItemHandlerHelper.insertItemStacked(
+                bot.getInventory().getCombinedInventory(), off.copy(), false);
+        bot.setHeldItem(EnumHand.OFF_HAND, ItemStack.EMPTY);
+        if (!remainder.isEmpty()) {
+            bot.entityDropItem(remainder, 0.0F);
         }
     }
 }

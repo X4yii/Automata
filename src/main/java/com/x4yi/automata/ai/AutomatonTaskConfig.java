@@ -89,18 +89,6 @@ public class AutomatonTaskConfig {
         this.jobId = jobId == null ? AutomatonBuiltInJobs.IDLE : jobId;
     }
 
-    public AutomatonJobType getJobType() {
-        if ("automata".equals(jobId.getNamespace())) {
-            return AutomatonJobType.fromId(jobId.getPath());
-        }
-        return AutomatonJobType.IDLE;
-    }
-
-    public void setJobType(AutomatonJobType jobType) {
-        AutomatonJobType safe = jobType == null ? AutomatonJobType.IDLE : jobType;
-        this.jobId = new ResourceLocation("automata", safe.getId());
-    }
-
     @Nullable
     public BlockPos getPos1() {
         return pos1;
@@ -284,7 +272,7 @@ public class AutomatonTaskConfig {
             if (rawJob.contains(":")) {
                 setJobId(new ResourceLocation(rawJob));
             } else {
-                setJobType(AutomatonJobType.fromId(rawJob));
+                setJobId(new ResourceLocation("automata", rawJob));
             }
         }
         pos1 = readPos(tag, "Pos1");

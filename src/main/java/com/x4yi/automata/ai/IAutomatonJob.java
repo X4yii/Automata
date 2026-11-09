@@ -9,29 +9,14 @@ import com.x4yi.automata.api.IAutomatonContext;
  */
 public interface IAutomatonJob {
 
-    default AutomatonJobType getType() {
-        return AutomatonJobType.IDLE;
-    }
+    ResourceLocation getJobId();
 
-    default ResourceLocation getJobId() {
-        return new ResourceLocation("automata", getType().getId());
-    }
-
-    default void tick(IAutomatonContext ctx) {
-        if (ctx instanceof AutomatonAIContext aiCtx) {
-            tick(aiCtx);
-        }
-    }
-
-    default void tick(AutomatonAIContext ctx) {
-    }
+    void tick(IAutomatonContext ctx);
 
     default void onStop(IAutomatonContext ctx) {
-        if (ctx instanceof AutomatonAIContext aiCtx) {
-            onStop(aiCtx);
-        }
     }
 
-    default void onStop(AutomatonAIContext ctx) {
+    default boolean hasCommittedWork(IAutomatonContext ctx) {
+        return false;
     }
 }

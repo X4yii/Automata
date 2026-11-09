@@ -254,7 +254,7 @@ public final class InventoryManagerService {
             boolean isBlock = stack.getItem() instanceof ItemBlock;
             boolean keep = shouldKeepItem(
                     stack,
-                    cfg.getJobType(),
+                    cfg.getJobId(),
                     cfg.isAllowScaffolding(),
                     isFood && !keptFood,
                     isBlock && !keptBlock);
@@ -277,7 +277,7 @@ public final class InventoryManagerService {
 
     public static boolean shouldKeepItem(
             ItemStack stack,
-            AutomatonJobType jobType,
+            net.minecraft.util.ResourceLocation jobId,
             boolean allowScaffolding,
             boolean isFirstFoodStack,
             boolean isFirstScaffoldStack) {
@@ -290,15 +290,17 @@ public final class InventoryManagerService {
         if (stack.getItem() instanceof ItemTool || stack.getItem() instanceof ItemSword || EquipmentSelector.isShieldItem(stack)) {
             return true;
         }
-        if (jobType == AutomatonJobType.FARMER) {
+        if (com.x4yi.automata.api.AutomatonBuiltInJobs.FARMER.equals(jobId)) {
             if (stack.getItem() instanceof ItemHoe || stack.getItem() instanceof IPlantable) {
                 return true;
             }
         }
-        if (jobType == AutomatonJobType.LUMBERJACK && JobBlockSupport.matchesOreDict(stack, "treeSapling")) {
+        if (com.x4yi.automata.api.AutomatonBuiltInJobs.LUMBERJACK.equals(jobId)
+                && JobBlockSupport.matchesOreDict(stack, "treeSapling")) {
             return true;
         }
-        return (jobType == AutomatonJobType.EXCAVATION || jobType == AutomatonJobType.MINE)
+        return (com.x4yi.automata.api.AutomatonBuiltInJobs.EXCAVATION.equals(jobId)
+                || com.x4yi.automata.api.AutomatonBuiltInJobs.MINE.equals(jobId))
                 && allowScaffolding
                 && isFirstScaffoldStack
                 && stack.getItem() instanceof ItemBlock;

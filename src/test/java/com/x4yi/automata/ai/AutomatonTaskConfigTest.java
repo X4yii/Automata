@@ -11,23 +11,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AutomatonTaskConfigTest {
 
     @Test
-    void excavationJobAndNoLegacyFlattenAlias() {
-        assertEquals(AutomatonJobType.EXCAVATION, AutomatonJobType.fromId("excavation"));
-        assertEquals(AutomatonJobType.IDLE, AutomatonJobType.fromId("flatten"));
-        assertEquals(AutomatonJobType.IDLE, AutomatonJobType.fromId("unknown"));
+    void excavationJobAndCustomNamespaceRoundTrip() {
+        AutomatonTaskConfig cfg = new AutomatonTaskConfig();
+        cfg.setJobId(com.x4yi.automata.api.AutomatonBuiltInJobs.EXCAVATION);
+        assertEquals(com.x4yi.automata.api.AutomatonBuiltInJobs.EXCAVATION, cfg.getJobId());
+
+        net.minecraft.util.ResourceLocation addonJob = new net.minecraft.util.ResourceLocation("addonmod", "mine");
+        cfg.setJobId(addonJob);
+        assertEquals(addonJob, cfg.getJobId());
     }
 
     @Test
     void completionBehaviorRoundTripsInNbt() {
         AutomatonTaskConfig cfg = new AutomatonTaskConfig();
-        cfg.setJobType(AutomatonJobType.EXCAVATION);
+        cfg.setJobId(com.x4yi.automata.api.AutomatonBuiltInJobs.EXCAVATION);
         cfg.setCompletionBehavior(TaskCompletionBehavior.RETURN_AND_STAY);
 
         NBTTagCompound nbt = cfg.serializeNBT();
         AutomatonTaskConfig restored = new AutomatonTaskConfig();
         restored.deserializeNBT(nbt);
 
-        assertEquals(AutomatonJobType.EXCAVATION, restored.getJobType());
+        assertEquals(com.x4yi.automata.api.AutomatonBuiltInJobs.EXCAVATION, restored.getJobId());
         assertEquals(TaskCompletionBehavior.RETURN_AND_STAY, restored.getCompletionBehavior());
 
         assertEquals(TaskCompletionBehavior.FOLLOW_OWNER, TaskCompletionBehavior.fromId("invalid"));

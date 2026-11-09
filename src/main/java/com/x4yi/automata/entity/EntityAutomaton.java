@@ -9,8 +9,11 @@ import javax.annotation.Nullable;
 
 import com.google.common.base.Optional;
 
+import net.minecraft.block.material.Material;
+import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.entity.EntityCreature;
 import net.minecraft.entity.IEntityLivingData;
+import net.minecraft.entity.MoverType;
 import net.minecraft.entity.SharedMonsterAttributes;
 import net.minecraft.entity.ai.attributes.AttributeModifier;
 import net.minecraft.entity.item.EntityItem;
@@ -33,6 +36,9 @@ import net.minecraft.util.DamageSource;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.EnumHand;
 import net.minecraft.util.EnumParticleTypes;
+import net.minecraft.util.math.AxisAlignedBB;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.text.TextComponentTranslation;
 import net.minecraft.world.DifficultyInstance;
 import net.minecraft.world.World;
@@ -68,8 +74,11 @@ public class EntityAutomaton extends EntityCreature {
 
     private static final float STANDING_WIDTH = 0.6F;
     private static final float STANDING_HEIGHT = 1.8F;
+    private static final float SWIMMING_WIDTH = 0.6F;
+    private static final float SWIMMING_HEIGHT = 0.6F;
     private static final float DOWNED_WIDTH = 1.2F;
     private static final float DOWNED_HEIGHT = 0.5F;
+    private static final int SWIMMING_FLAG = 4;
 
     private static final DataParameter<Optional<UUID>> OWNER_UUID =
             EntityDataManager.createKey(EntityAutomaton.class, DataSerializers.OPTIONAL_UNIQUE_ID);
@@ -115,11 +124,126 @@ public class EntityAutomaton extends EntityCreature {
     }
 
     @Override
+    public void move(net.minecraft.entity.MoverType type, double x, double y, double z) {
+        if (type == net.minecraft.entity.MoverType.SELF && onGround && !noClip && isSneaking()) {
+            double step = 0.05D;
+            while (x != 0.0D && world.getCollisionBoxes(this, getEntityBoundingBox().offset(x, -stepHeight, 0.0D)).isEmpty()) {
+                if (x < step && x >= -step) {
+                    x = 0.0D;
+                } else if (x > 0.0D) {
+                    x -= step;
+                } else {
+                    x += step;
+                }
+            }
+            while (z != 0.0D && world.getCollisionBoxes(this, getEntityBoundingBox().offset(0.0D, -stepHeight, z)).isEmpty()) {
+                if (z < step && z >= -step) {
+                    z = 0.0D;
+                } else if (z > 0.0D) {
+                    z -= step;
+                } else {
+                    z += step;
+                }
+            }
+            while (x != 0.0D && z != 0.0D
+                    && world.getCollisionBoxes(this, getEntityBoundingBox().offset(x, -stepHeight, z)).isEmpty()) {
+                if (x < step && x >= -step) {
+                    x = 0.0D;
+                } else if (x > 0.0D) {
+                    x -= step;
+                } else {
+                    x += step;
+                }
+                if (z < step && z >= -step) {
+                    z = 0.0D;
+                } else if (z > 0.0D) {
+                    z -= step;
+                } else {
+                    z += step;
+                }
+            }
+        }
+        super.move(type, x, y, z);
+    }
+
+    private float swimAnimation;
+    private float prevSwimAnimation;
+
+    @Override
     public float getEyeHeight() {
         if (isDowned()) {
             return 0.35F;
         }
+        if (isSwimming()) {
+            return 0.4F;
+        }
         return isSneaking() ? 1.54F : 1.62F;
+    }
+
+    public boolean isSwimming() {
+        return getFlag(SWIMMING_FLAG);
+    }
+
+    public void setSwimming(boolean swimming) {
+        setFlag(SWIMMING_FLAG, swimming);
+    }
+
+    public float getSwimAnimation(float partialTicks) {
+        return prevSwimAnimation + (swimAnimation - prevSwimAnimation) * partialTicks;
+    }
+
+    static float stepSwimAnimation(float current, boolean swimming) {
+        return MathHelper.clamp(current + (swimming ? 0.09F : -0.09F), 0.0F, 1.0F);
+    }
+
+    public boolean canStandUpFromSwim() {
+        if (world == null) {
+            return true;
+        }
+        AxisAlignedBB standingBox = new AxisAlignedBB(
+                posX - (STANDING_WIDTH * 0.5D),
+                posY,
+                posZ - (STANDING_WIDTH * 0.5D),
+                posX + (STANDING_WIDTH * 0.5D),
+                posY + STANDING_HEIGHT,
+                posZ + (STANDING_WIDTH * 0.5D));
+        return world.getCollisionBoxes(this, standingBox).isEmpty();
+    }
+
+    protected boolean hasUnderwaterObjective() {
+        if (brain == null || world == null) {
+            return false;
+        }
+        BlockPos goal = brain.getContext().getActiveGoal();
+        if (goal != null && (goal.getY() < posY - 0.3D
+                || world.getBlockState(goal).getMaterial() == Material.WATER)) {
+            return true;
+        }
+        int targetId = brain.getContext().getCombatTacticsState().activeTargetId;
+        if (targetId >= 0) {
+            net.minecraft.entity.Entity target = world.getEntityByID(targetId);
+            if (target != null && target.isEntityAlive()
+                    && (target.isInWater() || target.posY < posY - 0.3D)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected void updateSwimming() {
+        boolean shouldSwim;
+        boolean swimDesired = isSprinting() || hasUnderwaterObjective();
+        if (isDowned() || isRiding()) {
+            shouldSwim = false;
+        } else if (isSwimming()) {
+            shouldSwim = (swimDesired && isInWater()) || !canStandUpFromSwim();
+        } else {
+            shouldSwim = swimDesired && isInWater();
+        }
+        if (shouldSwim != isSwimming()) {
+            setSwimming(shouldSwim);
+        }
+        updatePoseHitbox(isDowned());
     }
 
     @Override
@@ -145,6 +269,8 @@ public class EntityAutomaton extends EntityCreature {
     public void updatePoseHitbox(boolean downed) {
         if (downed) {
             setSize(DOWNED_WIDTH, DOWNED_HEIGHT);
+        } else if (isSwimming()) {
+            setSize(SWIMMING_WIDTH, SWIMMING_HEIGHT);
         } else {
             setSize(STANDING_WIDTH, STANDING_HEIGHT);
         }
@@ -178,6 +304,9 @@ public class EntityAutomaton extends EntityCreature {
         tasks.addTask(0, new EntityAISwimming(this) {
             @Override
             public boolean shouldExecute() {
+                if (getAir() >= 120 && (isSwimming() || hasUnderwaterObjective())) {
+                    return false;
+                }
                 if (brain != null && brain.getContext().getMiningController().isMining() && getAir() >= 60) {
                     return false;
                 }
@@ -186,6 +315,9 @@ public class EntityAutomaton extends EntityCreature {
 
             @Override
             public boolean shouldContinueExecuting() {
+                if (getAir() >= 120 && (isSwimming() || hasUnderwaterObjective())) {
+                    return false;
+                }
                 if (brain != null && brain.getContext().getMiningController().isMining() && getAir() >= 60) {
                     return false;
                 }
@@ -421,23 +553,36 @@ public class EntityAutomaton extends EntityCreature {
     @Override
     public void onLivingUpdate() {
         updateArmSwingProgress();
+        prevSwimAnimation = swimAnimation;
         if (isDowned()) {
             motionX = 0.0D;
             motionZ = 0.0D;
             setSprinting(false);
+            setSwimming(false);
             getNavigator().clearPath();
             setAttackTarget(null);
         }
+        updateSwimming();
+        swimAnimation = stepSwimAnimation(swimAnimation, isSwimming());
         super.onLivingUpdate();
 
         if (!world.isRemote) {
             if (ticksSinceLastAttack < 200) {
                 ticksSinceLastAttack++;
             }
+            if (isDowned() || ticksExisted % 20 == 0) {
+                com.x4yi.automata.compat.SrpCompat.enforceTickImmunity(this);
+            }
             if (!isDowned()) {
-                if (isEntityAlive() && BudgetedTickScheduler.shouldRun(world.getTotalWorldTime(), getEntityId(), 4)) {
+                if (isEntityAlive()
+                        && BudgetedTickScheduler.shouldRun(
+                                world.getTotalWorldTime(),
+                                getEntityId(),
+                                4,
+                                world.getMinecraftServer())) {
                     pickupNearbyItems();
                 }
+                com.x4yi.automata.compat.SpartanWeaponryCompat.tickBoomerangReturn(this);
                 if (world instanceof WorldServer worldServer) {
                     FakePlayerService.tickEquippedItemEffects(worldServer, this);
                 }
@@ -449,12 +594,58 @@ public class EntityAutomaton extends EntityCreature {
                 cancelEating();
                 brain.getContext().stopNavigation();
                 brain.getContext().resetMining();
+                if (ticksExisted % 5 == 0) {
+                    clearHostileAggroOnSelf();
+                }
                 if (getOwnerUuid() != null) {
                     brain.getContext().getBlackboard().reportDowned(getEntityId(), getPosition(), world.getTotalWorldTime());
                 }
                 chunkLoader.releaseAll();
             }
         }
+    }
+
+    public boolean isAlliedWith(@Nullable EntityAutomaton other) {
+        if (other == null || other == this) {
+            return false;
+        }
+        UUID myOwner = getOwnerUuid();
+        UUID otherOwner = other.getOwnerUuid();
+        if (myOwner != null && myOwner.equals(otherOwner)) {
+            return true;
+        }
+        if (myOwner == null && otherOwner == null) {
+            String myChannel = taskConfig.getSquadChannel();
+            String otherChannel = other.taskConfig.getSquadChannel();
+            return myChannel != null && !myChannel.isEmpty() && myChannel.equals(otherChannel);
+        }
+        return false;
+    }
+
+    @Override
+    protected void collideWithEntity(net.minecraft.entity.Entity entityIn) {
+        if (entityIn instanceof EntityAutomaton other
+                && isEntityAlive()
+                && other.isEntityAlive()
+                && !isDowned()
+                && !other.isDowned()
+                && isAlliedWith(other)) {
+            return;
+        }
+        super.collideWithEntity(entityIn);
+    }
+
+    @Override
+    public void applyEntityCollision(net.minecraft.entity.Entity entityIn) {
+        if (entityIn instanceof EntityAutomaton other
+                && isEntityAlive()
+                && other.isEntityAlive()
+                && !isDowned()
+                && !other.isDowned()
+                && isAlliedWith(other)) {
+            return;
+        }
+        super.applyEntityCollision(entityIn);
     }
 
     private void tickHungerAndHealing() {
@@ -642,6 +833,16 @@ public class EntityAutomaton extends EntityCreature {
         return super.attackEntityFrom(source, amount);
     }
 
+    @Override
+    public boolean attackable() {
+        return !isDowned() && super.attackable();
+    }
+
+    @Override
+    public boolean canBeAttackedWithItem() {
+        return !isDowned() && super.canBeAttackedWithItem();
+    }
+
     public void enterDownedState() {
         dataManager.set(DOWNED, true);
         updatePoseHitbox(true);
@@ -649,21 +850,28 @@ public class EntityAutomaton extends EntityCreature {
         setHealth(1.0F);
         extinguish();
         setSprinting(false);
+        setSwimming(false);
         getNavigator().clearPath();
         setAttackTarget(null);
         setRevengeTarget(null);
         chunkLoader.releaseAll();
-        if (!world.isRemote) {
-            List<net.minecraft.entity.EntityLiving> attackers = world.getEntitiesWithinAABB(
-                    net.minecraft.entity.EntityLiving.class,
-                    getEntityBoundingBox().grow(32.0D));
-            for (net.minecraft.entity.EntityLiving mob : attackers) {
-                if (mob.getAttackTarget() == this) {
-                    mob.setAttackTarget(null);
-                }
-                if (mob.getRevengeTarget() == this) {
-                    mob.setRevengeTarget(null);
-                }
+        com.x4yi.automata.compat.SrpCompat.enforceTickImmunity(this);
+        clearHostileAggroOnSelf();
+    }
+
+    private void clearHostileAggroOnSelf() {
+        if (world.isRemote) {
+            return;
+        }
+        List<net.minecraft.entity.EntityLiving> attackers = world.getEntitiesWithinAABB(
+                net.minecraft.entity.EntityLiving.class,
+                getEntityBoundingBox().grow(32.0D));
+        for (net.minecraft.entity.EntityLiving mob : attackers) {
+            if (mob.getAttackTarget() == this) {
+                mob.setAttackTarget(null);
+            }
+            if (mob.getRevengeTarget() == this) {
+                mob.setRevengeTarget(null);
             }
         }
     }
@@ -734,6 +942,15 @@ public class EntityAutomaton extends EntityCreature {
     }
 
     @Override
+    @Nullable
+    public net.minecraft.entity.Entity changeDimension(
+            int dimensionIn,
+            net.minecraftforge.common.util.ITeleporter teleporter) {
+        cleanupServerState();
+        return super.changeDimension(dimensionIn, teleporter);
+    }
+
+    @Override
     public void setDead() {
         cleanupServerState();
         super.setDead();
@@ -751,7 +968,6 @@ public class EntityAutomaton extends EntityCreature {
             brain.getContext().resetMining();
             brain.getContext().getBlackboard().clearDowned(getEntityId());
             brain.getContext().getBlackboard().clearReviveInProgress(getEntityId());
-            com.x4yi.automata.ai.jobs.CombatJobSupport.clearState(getEntityId());
             chunkLoader.releaseAll();
         }
     }
@@ -819,6 +1035,54 @@ public class EntityAutomaton extends EntityCreature {
     }
 
     @Override
+    public void travel(float strafe, float vertical, float forward) {
+        if (!isDowned() && isInWater() && isSwimming() && isServerWorld()) {
+            double prevY = posY;
+            float drag = isSprinting() ? 0.9F : getWaterSlowDown();
+            float accel = 0.02F;
+            float depthStrider = Math.min(3.0F, EnchantmentHelper.getDepthStriderModifier(this));
+            if (!onGround) {
+                depthStrider *= 0.5F;
+            }
+            if (depthStrider > 0.0F) {
+                drag += (0.54600006F - drag) * depthStrider / 3.0F;
+                accel += (getAIMoveSpeed() - accel) * depthStrider / 3.0F;
+            }
+            moveRelative(strafe, vertical, forward, accel);
+
+            double lookY = getLookVec().y;
+            double factor = lookY < -0.2D ? 0.12D : 0.08D;
+            if (lookY <= 0.0D
+                    || isJumping
+                    || world.getBlockState(new BlockPos(posX, posY + 0.9D, posZ)).getMaterial() == Material.WATER) {
+                motionY += (lookY - motionY) * factor;
+            }
+
+            move(MoverType.SELF, motionX, motionY, motionZ);
+            motionX *= drag;
+            motionY *= 0.8D;
+            motionZ *= drag;
+
+            if (collidedHorizontally && (isOffsetPositionInLiquid(motionX, motionY + 0.6000000238418579D - posY + prevY, motionZ)
+                    || getLookVec().y > -0.15D)) {
+                motionY = 0.32D;
+            }
+
+            prevLimbSwingAmount = limbSwingAmount;
+            double dx = posX - prevPosX;
+            double dz = posZ - prevPosZ;
+            float swing = MathHelper.sqrt(dx * dx + dz * dz) * 4.0F;
+            if (swing > 1.0F) {
+                swing = 1.0F;
+            }
+            limbSwingAmount += (swing - limbSwingAmount) * 0.4F;
+            limbSwing += limbSwingAmount;
+            return;
+        }
+        super.travel(strafe, vertical, forward);
+    }
+
+    @Override
     protected void updateEquipmentIfNeeded(EntityItem itemEntity) {
         tryPickupItem(itemEntity);
     }
@@ -840,6 +1104,20 @@ public class EntityAutomaton extends EntityCreature {
         }
         ItemStack stack = itemEntity.getItem();
         if (stack.isEmpty()) {
+            return false;
+        }
+        if (com.x4yi.automata.compat.SpartanWeaponryCompat.tryAbsorbPickedBoomerang(this, stack)) {
+            itemEntity.setDead();
+            playSound(SoundEvents.ENTITY_ITEM_PICKUP, 0.2F, ((rand.nextFloat() - rand.nextFloat()) * 0.7F + 1.0F) * 2.0F);
+            return true;
+        }
+        ItemStack simulatedRemainder = ItemHandlerHelper.insertItemStacked(
+                inventory.getCombinedInventory(), stack.copy(), true);
+        if (simulatedRemainder.getCount() >= stack.getCount()) {
+            return false;
+        }
+        if (net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
+                new com.x4yi.automata.api.event.BotPickupEvent(this, itemEntity, stack))) {
             return false;
         }
         int originalCount = stack.getCount();

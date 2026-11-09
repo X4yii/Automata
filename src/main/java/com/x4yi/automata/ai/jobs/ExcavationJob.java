@@ -6,13 +6,16 @@ import java.util.Map;
 import javax.annotation.Nullable;
 
 import net.minecraft.block.state.IBlockState;
+import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.WorldServer;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
-import com.x4yi.automata.ai.AutomatonJobType;
 import com.x4yi.automata.ai.IAutomatonJob;
 import com.x4yi.automata.ai.TaskCompletionService;
+import com.x4yi.automata.api.AutomataAPI;
+import com.x4yi.automata.api.AutomatonBuiltInJobs;
+import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.entity.EntityAutomaton;
 
 public class ExcavationJob implements IAutomatonJob {
@@ -25,12 +28,13 @@ public class ExcavationJob implements IAutomatonJob {
     private BlockPos cachedTarget;
 
     @Override
-    public AutomatonJobType getType() {
-        return AutomatonJobType.EXCAVATION;
+    public ResourceLocation getJobId() {
+        return AutomatonBuiltInJobs.EXCAVATION;
     }
 
     @Override
-    public void onStop(AutomatonAIContext ctx) {
+    public void onStop(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         if (cachedTarget != null) {
             JobBlockSupport.release(ctx, cachedTarget);
             cachedTarget = null;
@@ -39,7 +43,8 @@ public class ExcavationJob implements IAutomatonJob {
     }
 
     @Override
-    public void tick(AutomatonAIContext ctx) {
+    public void tick(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         if (ctx.getTaskConfig().getPos1() == null || ctx.getTaskConfig().getPos2() == null) {
             return;
         }
@@ -152,6 +157,9 @@ public class ExcavationJob implements IAutomatonJob {
         }
         IBlockState state = world.getBlockState(pos);
         if (state.getMaterial().isLiquid()) {
+            return false;
+        }
+        if (JobBlockSupport.isBlockBlacklisted(state)) {
             return false;
         }
         return state.getBlockHardness(world, pos) >= 0.0F;

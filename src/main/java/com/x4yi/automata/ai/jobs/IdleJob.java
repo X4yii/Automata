@@ -2,13 +2,16 @@
 package com.x4yi.automata.ai.jobs;
 
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.WorldServer;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
-import com.x4yi.automata.ai.AutomatonJobType;
 import com.x4yi.automata.ai.IAutomatonJob;
 import com.x4yi.automata.ai.TaskCompletionBehavior;
+import com.x4yi.automata.api.AutomataAPI;
+import com.x4yi.automata.api.AutomatonBuiltInJobs;
+import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.entity.EntityAutomaton;
 
 public class IdleJob implements IAutomatonJob {
@@ -20,12 +23,13 @@ public class IdleJob implements IAutomatonJob {
     private long nextRoamTick;
 
     @Override
-    public AutomatonJobType getType() {
-        return AutomatonJobType.IDLE;
+    public ResourceLocation getJobId() {
+        return AutomatonBuiltInJobs.IDLE;
     }
 
     @Override
-    public void tick(AutomatonAIContext ctx) {
+    public void tick(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         EntityAutomaton bot = ctx.getAutomaton();
         bot.getChunkLoader().setExtraWorkChunk(null);
         if (ctx.getTaskConfig().getCompletionBehavior() != TaskCompletionBehavior.FOLLOW_OWNER) {

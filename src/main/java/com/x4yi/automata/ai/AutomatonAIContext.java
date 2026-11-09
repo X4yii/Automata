@@ -3,7 +3,10 @@ package com.x4yi.automata.ai;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.annotation.Nullable;
@@ -15,6 +18,8 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.items.IItemHandlerModifiable;
 
+import com.x4yi.automata.AutomataMod;
+import com.x4yi.automata.ai.jobs.CombatJobSupport;
 import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.config.AutomataConfig;
 import com.x4yi.automata.coordination.SquadBlackboard;
@@ -32,17 +37,22 @@ public class AutomatonAIContext implements IAutomatonContext {
     private static final int PATH_CACHE_CHUNK_RADIUS = 2;
     private static final long FAILED_GOAL_BASE_COOLDOWN_TICKS = 30L;
     private static final int FAILED_MEMORY_CAPACITY = 16;
+    static final long PENDING_PATH_TIMEOUT_TICKS = 200L;
 
     private final EntityAutomaton automaton;
     private final MiningProgressController miningController = new MiningProgressController();
     private final long[] failedGoalKeys = new long[FAILED_MEMORY_CAPACITY];
     private final long[] failedUntilTicks = new long[FAILED_MEMORY_CAPACITY];
     private final int[] failedCounts = new int[FAILED_MEMORY_CAPACITY];
+    @Nullable
+    private CombatJobSupport.CombatTacticsState combatTacticsState;
 
     @Nullable
     private CompletableFuture<PathResult> pendingPath;
     @Nullable
     private AtomicBoolean pendingCancel;
+    private int pendingPathDimension = Integer.MIN_VALUE;
+    private long pendingPathStartTick;
     @Nullable
     private BlockPos activeGoal;
     private int failedCursor;
@@ -56,6 +66,16 @@ public class AutomatonAIContext implements IAutomatonContext {
     private long cachedLivingTick = Long.MIN_VALUE;
     private double cachedLivingRadius;
     private List<EntityLivingBase> cachedLivingEntities = Collections.emptyList();
+    @Nullable
+    private BlockPos lastSafePos;
+    private int lastSafeDimension = Integer.MIN_VALUE;
+    @Nullable
+    private SquadBlackboard cachedBoard;
+    private int cachedBoardDimension = Integer.MIN_VALUE;
+    @Nullable
+    private UUID cachedBoardOwner;
+    @Nullable
+    private String cachedBoardChannel;
 
     public AutomatonAIContext(EntityAutomaton automaton) {
         this.automaton = automaton;
@@ -63,6 +83,21 @@ public class AutomatonAIContext implements IAutomatonContext {
 
     public EntityAutomaton getAutomaton() {
         return automaton;
+    }
+
+    public void recordSafePos(BlockPos pos) {
+        if (pos != null && pos.getY() >= 1) {
+            this.lastSafePos = pos.toImmutable();
+            this.lastSafeDimension = automaton.world.provider.getDimension();
+        }
+    }
+
+    @Nullable
+    public BlockPos getLastSafePos() {
+        if (lastSafePos != null && lastSafeDimension == automaton.world.provider.getDimension()) {
+            return lastSafePos;
+        }
+        return null;
     }
 
     public WorldServer getWorld() {
@@ -81,11 +116,97 @@ public class AutomatonAIContext implements IAutomatonContext {
         return miningController;
     }
 
+    public CombatJobSupport.CombatTacticsState getCombatTacticsState() {
+        if (combatTacticsState == null) {
+            combatTacticsState = CombatJobSupport.createTacticsState(automaton.getEntityId());
+        }
+        return combatTacticsState;
+    }
+
     public SquadBlackboard getBlackboard() {
-        return SquadRegistry.getBoard(
-                automaton.world.provider.getDimension(),
-                automaton.getOwnerUuid(),
-                automaton.getTaskConfig().getSquadChannel());
+        int dim = automaton.world.provider.getDimension();
+        UUID owner = automaton.getOwnerUuid();
+        String channel = automaton.getTaskConfig().getSquadChannel();
+        if (cachedBoard != null
+                && dim == cachedBoardDimension
+                && java.util.Objects.equals(owner, cachedBoardOwner)
+                && java.util.Objects.equals(channel, cachedBoardChannel)) {
+            return cachedBoard;
+        }
+        SquadBlackboard board = SquadRegistry.getBoard(dim, owner, channel);
+        cachedBoard = board;
+        cachedBoardDimension = dim;
+        cachedBoardOwner = owner;
+        cachedBoardChannel = channel;
+        return board;
+    }
+
+    public void computeAllySeparation(double minGapBlocks, double[] outXz) {
+        outXz[0] = 0.0D;
+        outXz[1] = 0.0D;
+        if (minGapBlocks <= 0.0D) {
+            return;
+        }
+        List<EntityLivingBase> nearby = getNearbyLivingEntities(4.0D);
+        if (nearby.isEmpty()) {
+            return;
+        }
+        double selfX = automaton.posX;
+        double selfY = automaton.posY;
+        double selfZ = automaton.posZ;
+        double selfHalfW = automaton.width * 0.5D;
+        int selfId = automaton.getEntityId();
+        for (EntityLivingBase other : nearby) {
+            if (!(other instanceof EntityAutomaton ally)
+                    || ally == automaton
+                    || !ally.isEntityAlive()
+                    || ally.isDowned()
+                    || Math.abs(ally.posY - selfY) > 1.8D
+                    || !automaton.isAlliedWith(ally)) {
+                continue;
+            }
+            accumulateSeparationStep(
+                    selfX,
+                    selfZ,
+                    selfHalfW,
+                    selfId,
+                    ally.posX,
+                    ally.posZ,
+                    ally.width * 0.5D,
+                    ally.getEntityId(),
+                    minGapBlocks,
+                    outXz);
+        }
+    }
+
+    static void accumulateSeparationStep(
+            double selfX,
+            double selfZ,
+            double selfHalfW,
+            int selfId,
+            double otherX,
+            double otherZ,
+            double otherHalfW,
+            int otherId,
+            double minGapBlocks,
+            double[] outXz) {
+        double minCenterDist = selfHalfW + otherHalfW + minGapBlocks;
+        double dx = selfX - otherX;
+        double dz = selfZ - otherZ;
+        double distSq = dx * dx + dz * dz;
+        if (distSq >= minCenterDist * minCenterDist) {
+            return;
+        }
+        if (distSq < 1.0E-6D) {
+            double angle = ((selfId ^ otherId) & 7) * (Math.PI * 0.25D);
+            outXz[0] += Math.cos(angle);
+            outXz[1] += Math.sin(angle);
+            return;
+        }
+        double dist = Math.sqrt(distSq);
+        double weight = (minCenterDist - dist) / minCenterDist;
+        outXz[0] += (dx / dist) * weight;
+        outXz[1] += (dz / dist) * weight;
     }
 
     public long getWorldTime() {
@@ -141,22 +262,77 @@ public class AutomatonAIContext implements IAutomatonContext {
     }
 
     public void pollPendingPath() {
-        if (pendingPath != null && pendingPath.isDone()) {
-            PathResult result = pendingPath.getNow(PathResult.EMPTY);
-            pendingPath = null;
-            pendingCancel = null;
-            if (!result.isEmpty()) {
+        if (pendingPath == null) {
+            return;
+        }
+        int currentDim = automaton.world.provider.getDimension();
+        if (currentDim != pendingPathDimension) {
+            cancelPendingPath();
+            activeGoal = null;
+            return;
+        }
+        long now = getWorldTime();
+        if (!pendingPath.isDone()) {
+            if (now - pendingPathStartTick > PENDING_PATH_TIMEOUT_TICKS) {
+                AutomataMod.LOGGER.warn(
+                        "Pathfinding timed out after {} ticks for automaton {} (#{}) toward {}",
+                        now - pendingPathStartTick,
+                        automaton.getName(),
+                        automaton.getEntityId(),
+                        activeGoal);
                 if (activeGoal != null) {
-                    if (result.isComplete() || result.length() > 3) {
-                        clearFailedGoal(activeGoal);
-                    } else {
-                        recordFailedGoal(activeGoal, getWorldTime());
-                    }
+                    recordFailedGoal(activeGoal, now);
                 }
-                getMovement().setPath(result);
-            } else if (activeGoal != null) {
-                recordFailedGoal(activeGoal, getWorldTime());
+                cancelPendingPath();
             }
+            return;
+        }
+
+        CompletableFuture<PathResult> finished = pendingPath;
+        boolean wasCancelled = pendingCancel != null && pendingCancel.get();
+        pendingPath = null;
+        pendingCancel = null;
+        PathResult result = resolvePendingPathResult(finished);
+        if (!result.isEmpty() && isPathPrefixValid(result, 4)) {
+            if (activeGoal != null) {
+                if (result.isComplete() || result.length() > 3) {
+                    clearFailedGoal(activeGoal);
+                } else {
+                    recordFailedGoal(activeGoal, now);
+                }
+            }
+            getMovement().setPath(result);
+        } else if (activeGoal != null && !wasCancelled) {
+            recordFailedGoal(activeGoal, now);
+        }
+    }
+
+    private boolean isPathPrefixValid(PathResult result, int maxSteps) {
+        int limit = Math.min(maxSteps, result.length());
+        for (int i = 0; i < limit; i++) {
+            if (result.getAction(i) != com.x4yi.automata.navigation.PathNodeAction.WALK) {
+                continue;
+            }
+            long packed = result.getStep(i);
+            BlockPos pos = new BlockPos(
+                    PackedPos.unpackX(packed),
+                    PackedPos.unpackY(packed),
+                    PackedPos.unpackZ(packed));
+            if (automaton.world.isBlockLoaded(pos)
+                    && automaton.world.getBlockState(pos).getMaterial().blocksMovement()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static PathResult resolvePendingPathResult(CompletableFuture<PathResult> future) {
+        try {
+            PathResult result = future.getNow(PathResult.EMPTY);
+            return result != null ? result : PathResult.EMPTY;
+        } catch (CompletionException | CancellationException e) {
+            AutomataMod.LOGGER.warn("Async pathfinding task failed or was cancelled", e);
+            return PathResult.EMPTY;
         }
     }
 
@@ -224,6 +400,14 @@ public class AutomatonAIContext implements IAutomatonContext {
     }
 
     public void requestPathTo(BlockPos goal, boolean urgent, int maxNodes) {
+        requestPathInternal(goal, urgent, maxNodes, null);
+    }
+
+    private void requestPathInternal(
+            BlockPos goal,
+            boolean urgent,
+            int maxNodes,
+            @Nullable PathfindingSettings explicitSettings) {
         this.urgentMovement = urgent;
         long now = getWorldTime();
         long stuckKey = getMovement().getLastStuckGoal();
@@ -260,19 +444,38 @@ public class AutomatonAIContext implements IAutomatonContext {
         int effectiveMaxNodes = computePathBudget(dist, maxNodes);
         automaton.getChunkLoader().setExtraWorkChunk(goal);
 
-        boolean allowBreak = AutomataConfig.allowTerrainModificationInPathing && getTaskConfig().isAllowBreakThrough();
-        boolean allowScaffold = AutomataConfig.allowTerrainModificationInPathing
-                && getTaskConfig().isAllowScaffolding()
-                && EquipmentSelector.hasBuildingBlocks(automaton);
-        PathfindingSettings settings = new PathfindingSettings(
-                allowBreak,
-                getTaskConfig().isAllowParkour(),
-                allowScaffold,
-                effectiveMaxNodes,
-                PathfindingSettings.DEFAULT_MAX_FALL);
+        int scaffoldCount = EquipmentSelector.countScaffoldBlocks(automaton);
+        PathfindingSettings settings;
+        if (explicitSettings != null) {
+            settings = new PathfindingSettings(
+                    explicitSettings.allowBreakThrough(),
+                    explicitSettings.allowSprintJump(),
+                    explicitSettings.allowScaffolding() && scaffoldCount > 0,
+                    Math.max(effectiveMaxNodes, explicitSettings.maxExpandedNodes()),
+                    explicitSettings.maxFallDistance(),
+                    Math.min(scaffoldCount, explicitSettings.availableScaffoldBlocks()));
+        } else {
+            boolean allowBreak = AutomataConfig.allowTerrainModificationInPathing && getTaskConfig().isAllowBreakThrough();
+            boolean allowScaffold = AutomataConfig.allowTerrainModificationInPathing
+                    && getTaskConfig().isAllowScaffolding()
+                    && scaffoldCount > 0;
+            settings = new PathfindingSettings(
+                    allowBreak,
+                    getTaskConfig().isAllowParkour(),
+                    allowScaffold,
+                    effectiveMaxNodes,
+                    PathfindingSettings.DEFAULT_MAX_FALL,
+                    scaffoldCount);
+        }
 
+        if (!com.x4yi.automata.navigation.WorldCacheManager.ensureCorridorCached(
+                automaton.world, startPos, goal, chunkRadius)) {
+            return;
+        }
         AtomicBoolean cancelFlag = new AtomicBoolean(false);
         pendingCancel = cancelFlag;
+        pendingPathDimension = automaton.world.provider.getDimension();
+        pendingPathStartTick = now;
         pendingPath = PathfindingExecutor.submitServerPath(
                 automaton.world,
                 startPos,
@@ -331,7 +534,8 @@ public class AutomatonAIContext implements IAutomatonContext {
         if (allowCooldownBypass) {
             clearFailedGoal(goal);
         }
-        requestPathTo(goal, false);
+        int requestedNodes = settings != null ? settings.maxExpandedNodes() : PathfindingSettings.DEFAULT_MAX_NODES;
+        requestPathInternal(goal, false, requestedNodes, settings);
     }
 
     @Override

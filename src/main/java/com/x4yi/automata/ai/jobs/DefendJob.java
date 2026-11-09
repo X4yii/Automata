@@ -4,22 +4,26 @@ package com.x4yi.automata.ai.jobs;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.monster.IMob;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
-import com.x4yi.automata.ai.AutomatonJobType;
 import com.x4yi.automata.ai.IAutomatonJob;
+import com.x4yi.automata.api.AutomataAPI;
+import com.x4yi.automata.api.AutomatonBuiltInJobs;
+import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.entity.EntityAutomaton;
 
 public class DefendJob implements IAutomatonJob {
 
     @Override
-    public AutomatonJobType getType() {
-        return AutomatonJobType.DEFEND;
+    public ResourceLocation getJobId() {
+        return AutomatonBuiltInJobs.DEFEND;
     }
 
     @Override
-    public void tick(AutomatonAIContext ctx) {
+    public void tick(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         EntityAutomaton bot = ctx.getAutomaton();
         EntityPlayer owner = bot.getOwnerUuid() != null
                 ? ctx.getWorld().getPlayerEntityByUUID(bot.getOwnerUuid())

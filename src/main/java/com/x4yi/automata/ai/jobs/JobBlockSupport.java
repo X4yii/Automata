@@ -312,6 +312,20 @@ public final class JobBlockSupport {
         return world.isAirBlock(pos) || world.getBlockState(pos).getCollisionBoundingBox(world, pos) == null;
     }
 
+    public static boolean isBlockBlacklisted(net.minecraft.block.state.IBlockState state) {
+        net.minecraft.util.ResourceLocation reg = state.getBlock().getRegistryName();
+        if (reg == null) {
+            return false;
+        }
+        String id = reg.toString();
+        for (String blocked : com.x4yi.automata.config.AutomataConfig.blockBlacklist) {
+            if (id.equals(blocked)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     record AreaBounds(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {}
 }
 

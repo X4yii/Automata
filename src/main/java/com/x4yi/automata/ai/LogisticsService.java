@@ -53,7 +53,7 @@ public final class LogisticsService {
 
         com.x4yi.automata.api.JobDescriptor descriptor = com.x4yi.automata.api.AutomataAPI.getJob(cfg.getJobId());
         boolean logisticsEligible = descriptor == null
-                ? cfg.getJobType() != AutomatonJobType.COURIER
+                ? !com.x4yi.automata.api.AutomatonBuiltInJobs.COURIER.equals(cfg.getJobId())
                 : descriptor.isLogisticsEligible();
         if (logisticsEligible && cfg.getDepositChest() != null) {
             IItemHandlerModifiable main = bot.getInventory().getMainInventory();
@@ -68,11 +68,11 @@ public final class LogisticsService {
 
         if (logisticsEligible
                 && cfg.getToolChest() != null
-                && needsToolForDescriptor(bot, descriptor, cfg.getJobType())) {
+                && needsToolForDescriptor(bot, descriptor, cfg.getJobId())) {
             boolean handled = visitAndPull(
                     ctx,
                     cfg.getToolChest(),
-                    stack -> isToolForDescriptor(stack, descriptor, cfg.getJobType()),
+                    stack -> isToolForDescriptor(stack, descriptor, cfg.getJobId()),
                     1);
             if (!handled) {
                 ctx.triggerLogisticsBackoff(now, CHEST_BACKOFF_TICKS);
@@ -121,6 +121,9 @@ public final class LogisticsService {
             Predicate<ItemStack> matcher,
             int maxItemsToPull) {
         EntityAutomaton bot = ctx.getAutomaton();
+        if (ctx.isGoalOnCooldown(chestPos, ctx.getWorldTime())) {
+            return false;
+        }
         bot.getChunkLoader().setExtraWorkChunk(chestPos);
         if (bot.getDistanceSqToCenter(chestPos) > CHEST_REACH_SQ) {
             ctx.requestPathTo(chestPos, false);
@@ -162,6 +165,9 @@ public final class LogisticsService {
             BlockPos chestPos,
             IItemHandlerModifiable main) {
         EntityAutomaton bot = ctx.getAutomaton();
+        if (ctx.isGoalOnCooldown(chestPos, ctx.getWorldTime())) {
+            return false;
+        }
         bot.getChunkLoader().setExtraWorkChunk(chestPos);
         if (bot.getDistanceSqToCenter(chestPos) > CHEST_REACH_SQ) {
             ctx.requestPathTo(chestPos, false);
@@ -185,7 +191,7 @@ public final class LogisticsService {
             boolean isBlock = stack.getItem() instanceof ItemBlock;
             boolean keep = InventoryManagerService.shouldKeepItem(
                     stack,
-                    cfg.getJobType(),
+                    cfg.getJobId(),
                     cfg.isAllowScaffolding(),
                     isFood && !keptFood,
                     isBlock && !keptBlock);
@@ -235,7 +241,7 @@ public final class LogisticsService {
     private static boolean needsToolForDescriptor(
             EntityAutomaton bot,
             @Nullable com.x4yi.automata.api.JobDescriptor descriptor,
-            AutomatonJobType fallbackType) {
+            net.minecraft.util.ResourceLocation fallbackJobId) {
         if (descriptor != null) {
             if (!descriptor.needsTool(bot) || !descriptor.hasToolMatcher()) {
                 return false;
@@ -246,37 +252,45 @@ public final class LogisticsService {
             }
             return !hasItemMatching(bot.getInventory().getCombinedInventory(), descriptor::matchesTool);
         }
-        return needsToolForJob(bot, fallbackType);
+        return needsToolForJob(bot, fallbackJobId);
     }
 
     private static boolean isToolForDescriptor(
             ItemStack stack,
             @Nullable com.x4yi.automata.api.JobDescriptor descriptor,
-            AutomatonJobType fallbackType) {
+            net.minecraft.util.ResourceLocation fallbackJobId) {
         if (descriptor != null && descriptor.hasToolMatcher()) {
             return descriptor.matchesTool(stack);
         }
-        return isToolForJob(stack, fallbackType);
+        return isToolForJob(stack, fallbackJobId);
     }
 
-    private static boolean needsToolForJob(EntityAutomaton bot, AutomatonJobType jobType) {
-        if (jobType == AutomatonJobType.IDLE || jobType == AutomatonJobType.COURIER) {
+    private static boolean needsToolForJob(EntityAutomaton bot, net.minecraft.util.ResourceLocation jobId) {
+        if (com.x4yi.automata.api.AutomatonBuiltInJobs.IDLE.equals(jobId)
+                || com.x4yi.automata.api.AutomatonBuiltInJobs.COURIER.equals(jobId)) {
             return false;
         }
         ItemStack main = bot.getHeldItemMainhand();
-        if (!main.isEmpty() && isToolForJob(main, jobType)) {
+        if (!main.isEmpty() && isToolForJob(main, jobId)) {
             return false;
         }
-        return !hasItemMatching(bot.getInventory().getCombinedInventory(), s -> isToolForJob(s, jobType));
+        return !hasItemMatching(bot.getInventory().getCombinedInventory(), s -> isToolForJob(s, jobId));
     }
 
-    private static boolean isToolForJob(ItemStack stack, AutomatonJobType jobType) {
-        return switch (jobType) {
-            case DEFEND, CRAZY_DEFEND -> stack.getItem() instanceof ItemSword;
-            case FARMER -> EquipmentSelector.isHoe(stack);
-            case EXCAVATION, MINE, LUMBERJACK -> stack.getItem() instanceof ItemTool || EquipmentSelector.isAxe(stack);
-            default -> false;
-        };
+    private static boolean isToolForJob(ItemStack stack, net.minecraft.util.ResourceLocation jobId) {
+        if (com.x4yi.automata.api.AutomatonBuiltInJobs.DEFEND.equals(jobId)
+                || com.x4yi.automata.api.AutomatonBuiltInJobs.CRAZY_DEFEND.equals(jobId)) {
+            return stack.getItem() instanceof ItemSword;
+        }
+        if (com.x4yi.automata.api.AutomatonBuiltInJobs.FARMER.equals(jobId)) {
+            return EquipmentSelector.isHoe(stack);
+        }
+        if (com.x4yi.automata.api.AutomatonBuiltInJobs.EXCAVATION.equals(jobId)
+                || com.x4yi.automata.api.AutomatonBuiltInJobs.MINE.equals(jobId)
+                || com.x4yi.automata.api.AutomatonBuiltInJobs.LUMBERJACK.equals(jobId)) {
+            return stack.getItem() instanceof ItemTool || EquipmentSelector.isAxe(stack);
+        }
+        return false;
     }
 }
 

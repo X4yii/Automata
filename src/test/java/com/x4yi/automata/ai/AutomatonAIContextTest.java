@@ -4,8 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.junit.jupiter.api.Test;
 
+import com.x4yi.automata.navigation.PathResult;
 import com.x4yi.automata.navigation.PathfindingSettings;
 
 class AutomatonAIContextTest {
@@ -26,6 +29,17 @@ class AutomatonAIContextTest {
         assertTrue(AutomatonAIContext.isSnapshotReusable(100L, 100L, 16.0D, 14.0D));
         assertFalse(AutomatonAIContext.isSnapshotReusable(100L, 101L, 16.0D, 14.0D));
         assertFalse(AutomatonAIContext.isSnapshotReusable(100L, 100L, 16.0D, 24.0D));
+    }
+
+    @Test
+    void resolvePendingPathResultReturnsEmptyOnFailureOrCancellation() {
+        CompletableFuture<PathResult> failed = new CompletableFuture<>();
+        failed.completeExceptionally(new IllegalStateException("boom"));
+        assertTrue(AutomatonAIContext.resolvePendingPathResult(failed).isEmpty());
+
+        CompletableFuture<PathResult> cancelled = new CompletableFuture<>();
+        cancelled.cancel(true);
+        assertTrue(AutomatonAIContext.resolvePendingPathResult(cancelled).isEmpty());
     }
 }
 

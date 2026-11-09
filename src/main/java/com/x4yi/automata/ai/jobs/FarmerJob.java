@@ -29,9 +29,11 @@ import net.minecraftforge.common.IPlantable;
 import net.minecraftforge.items.IItemHandler;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
-import com.x4yi.automata.ai.AutomatonJobType;
 import com.x4yi.automata.ai.EquipmentSelector;
 import com.x4yi.automata.ai.IAutomatonJob;
+import com.x4yi.automata.api.AutomataAPI;
+import com.x4yi.automata.api.AutomatonBuiltInJobs;
+import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.entity.EntityAutomaton;
 
 public class FarmerJob implements IAutomatonJob {
@@ -47,12 +49,13 @@ public class FarmerJob implements IAutomatonJob {
     private long nextPatrolTick;
 
     @Override
-    public AutomatonJobType getType() {
-        return AutomatonJobType.FARMER;
+    public ResourceLocation getJobId() {
+        return AutomatonBuiltInJobs.FARMER;
     }
 
     @Override
-    public void onStop(AutomatonAIContext ctx) {
+    public void onStop(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         if (cachedTarget != null) {
             JobBlockSupport.release(ctx, cachedTarget);
             cachedTarget = null;
@@ -62,7 +65,8 @@ public class FarmerJob implements IAutomatonJob {
     }
 
     @Override
-    public void tick(AutomatonAIContext ctx) {
+    public void tick(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         EntityAutomaton bot = ctx.getAutomaton();
         WorldServer world = ctx.getWorld();
         long now = ctx.getWorldTime();

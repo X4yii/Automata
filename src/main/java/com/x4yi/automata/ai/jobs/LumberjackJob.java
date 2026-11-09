@@ -13,14 +13,17 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.util.EnumActionResult;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.EnumHand;
+import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.items.IItemHandlerModifiable;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
-import com.x4yi.automata.ai.AutomatonJobType;
 import com.x4yi.automata.ai.IAutomatonJob;
 import com.x4yi.automata.ai.TaskCompletionService;
+import com.x4yi.automata.api.AutomataAPI;
+import com.x4yi.automata.api.AutomatonBuiltInJobs;
+import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.entity.EntityAutomaton;
 import com.x4yi.automata.world.FakePlayerService;
 
@@ -42,12 +45,13 @@ public class LumberjackJob implements IAutomatonJob {
     private int pillarAttempts;
 
     @Override
-    public AutomatonJobType getType() {
-        return AutomatonJobType.LUMBERJACK;
+    public ResourceLocation getJobId() {
+        return AutomatonBuiltInJobs.LUMBERJACK;
     }
 
     @Override
-    public void onStop(AutomatonAIContext ctx) {
+    public void onStop(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         if (cachedTarget != null) {
             JobBlockSupport.release(ctx, cachedTarget);
             cachedTarget = null;
@@ -60,7 +64,8 @@ public class LumberjackJob implements IAutomatonJob {
     }
 
     @Override
-    public void tick(AutomatonAIContext ctx) {
+    public void tick(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         EntityAutomaton bot = ctx.getAutomaton();
         WorldServer world = ctx.getWorld();
         long now = ctx.getWorldTime();
@@ -461,6 +466,9 @@ public class LumberjackJob implements IAutomatonJob {
     }
 
     private static boolean isLogBlock(IBlockState state) {
+        if (JobBlockSupport.isBlockBlacklisted(state)) {
+            return false;
+        }
         Block block = state.getBlock();
         return LOG_BLOCK_CACHE.computeIfAbsent(block, b -> {
             ItemStack stack = new ItemStack(b, 1, b.getMetaFromState(state));

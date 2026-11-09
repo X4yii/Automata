@@ -1,7 +1,5 @@
 package com.x4yi.automata.ai.jobs;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 
 import javax.annotation.Nullable;
@@ -24,25 +22,24 @@ public final class CombatJobSupport {
     private static final double ATTACK_RANGE_SQ = 9.0D;
     private static final double LOW_GAP_ATTACK_RANGE_SQ = 10.89D;
     private static final double CRIT_APPROACH_RANGE_SQ = 14.0D;
-    private static final double BOW_MAX_RANGE_SQ = 1024.0D;
+    private static final double BOW_IDEAL_RANGE_SQ = 1024.0D;
+    private static final double BOW_MAX_RANGE_SQ = 4096.0D;
+    private static final double BOW_MAX_VERTICAL_RANGE = 72.0D;
     private static final double CREEPER_FLEE_RANGE_SQ = 22.0D;
     private static final double CLOSE_COMBAT_20HZ_SQ = 196.0D;
     private static final double EATING_RETREAT_RADIUS = 10.0D;
     private static final double ESCORT_DISTANCE_SQ = 64.0D;
     private static final long TURN_CLAIM_TTL_TICKS = 12L;
 
-    private static final Map<Integer, CombatTacticsState> TACTICS_BY_BOT = new ConcurrentHashMap<>();
-
     private CombatJobSupport() {}
 
-    public static void clearState(int entityId) {
-        TACTICS_BY_BOT.remove(entityId);
+    public static CombatTacticsState createTacticsState(int entityId) {
+        return new CombatTacticsState(computeInitialFlankSign(entityId));
     }
 
     public static void cancelBowDraw(EntityAutomaton bot) {
-        CombatTacticsState state = TACTICS_BY_BOT.get(bot.getEntityId());
-        if (state != null) {
-            state.bowChargeStartTick = -1L;
+        if (bot.getBrain() != null) {
+            bot.getBrain().getContext().getCombatTacticsState().bowChargeStartTick = -1L;
         }
         if (bot.isHandActive() && EquipmentSelector.isBowItem(bot.getActiveItemStack())) {
             bot.resetActiveHand();
@@ -52,8 +49,7 @@ public final class CombatJobSupport {
     public static void tickActiveCombat20Hz(AutomatonAIContext ctx, boolean urgent) {
         EntityAutomaton bot = ctx.getAutomaton();
         long now = ctx.getWorldTime();
-        CombatTacticsState state = TACTICS_BY_BOT.computeIfAbsent(
-                bot.getEntityId(), id -> new CombatTacticsState(computeInitialFlankSign(id)));
+        CombatTacticsState state = ctx.getCombatTacticsState();
 
         if (bot.isEating()) {
             cancelBowDraw(bot);
@@ -76,9 +72,20 @@ public final class CombatJobSupport {
             state.activeTargetId = -1;
             return;
         }
-        if (bot.getDistanceSq(target) <= CLOSE_COMBAT_20HZ_SQ) {
+        boolean activeRanged = isWithinBowRange(bot, target)
+                && (EquipmentSelector.isBowItem(bot.getHeldItemMainhand())
+                        || WeaponCombatProfile.resolve(bot.getHeldItemMainhand()).isRangedSkirmishStyle()
+                        || state.bowChargeStartTick >= 0L);
+        if (bot.getDistanceSq(target) <= CLOSE_COMBAT_20HZ_SQ || activeRanged) {
             engageTarget(ctx, target, urgent);
         }
+    }
+
+    static boolean isWithinBowRange(EntityAutomaton bot, EntityLivingBase target) {
+        double dx = target.posX - bot.posX;
+        double dz = target.posZ - bot.posZ;
+        double dy = Math.abs(target.posY - bot.posY);
+        return (dx * dx + dz * dz <= BOW_MAX_RANGE_SQ) && dy <= BOW_MAX_VERTICAL_RANGE;
     }
 
     private static void retreatWhileEating(
@@ -124,8 +131,7 @@ public final class CombatJobSupport {
     public static void engageTarget(AutomatonAIContext ctx, EntityLivingBase target, boolean urgent) {
         EntityAutomaton bot = ctx.getAutomaton();
         long now = ctx.getWorldTime();
-        CombatTacticsState state = TACTICS_BY_BOT.computeIfAbsent(
-                bot.getEntityId(), id -> new CombatTacticsState(computeInitialFlankSign(id)));
+        CombatTacticsState state = ctx.getCombatTacticsState();
         state.activeTargetId = target.getEntityId();
         state.lastEngagedTick = now;
 
@@ -167,7 +173,8 @@ public final class CombatJobSupport {
         }
 
         if (!(target instanceof EntityEnderman)
-                && distSq <= BOW_MAX_RANGE_SQ
+                && (isWithinBowRange(bot, target) || AdaptiveThreatAnalyzer.isAerialThreat(bot, target))
+                && !bot.isInWater()
                 && bot.canEntityBeSeen(target)
                 && RangedCombatController.equipBowIfReady(bot)) {
             RangedCombatController.engageWithBow(ctx, bot, target, state, distSq, now);
@@ -190,6 +197,9 @@ public final class CombatJobSupport {
                 && !ctx.getBlackboard().tryClaimAttackTurn(bot.getEntityId(), target.getEntityId(), now, TURN_CLAIM_TTL_TICKS, allowFocus);
 
         EquipmentSelector.equipBestWeapon(bot);
+        if (com.x4yi.automata.compat.SpartanWeaponryCompat.isTwoHanded(bot.getHeldItemMainhand())) {
+            MeleeCombatController.unequipOffhandForTwoHanded(bot);
+        }
         boolean sTapActive = now < state.sTapUntilTick;
         boolean targetInvulnerable = target.hurtResistantTime > target.maxHurtResistantTime / 2;
         boolean lowCeilingGap = isLowCeilingGapTarget(ctx.getWorld(), target);
@@ -204,10 +214,13 @@ public final class CombatJobSupport {
             return;
         }
 
+        WeaponCombatProfile profile = WeaponCombatProfile.resolve(bot.getHeldItemMainhand());
+        boolean heavyCritStyle = profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.HEAVY_BREAKER
+                || MeleeCombatController.isAxeOrSlowCritWeapon(bot);
         if (!lowCeilingGap
-                && MeleeCombatController.isAxeOrSlowCritWeapon(bot)
+                && heavyCritStyle
                 && bot.canEntityBeSeen(target)
-                && distSq <= CRIT_APPROACH_RANGE_SQ) {
+                && distSq <= Math.max(CRIT_APPROACH_RANGE_SQ, profile.getAttackRangeSq() + 4.0D)) {
             MeleeCombatController.engageWithAxeCrit(ctx, bot, target, state, distSq, now, targetInvulnerable, coop);
             return;
         }
@@ -224,11 +237,23 @@ public final class CombatJobSupport {
             if (lowCeilingGap) {
                 float fwd = distSq < 4.41D ? -0.75F : (distSq > 9.0D ? 0.55F : 0.0F);
                 input = new float[] {fwd, state.strafeDir * 0.55F};
+            } else if (profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.POLEARM_REACH) {
+                float fwd = distSq < profile.getIdealMinRangeSq()
+                        ? -0.85F
+                        : (distSq > profile.getAttackRangeSq() ? 0.90F : 0.10F);
+                input = new float[] {fwd, state.strafeDir * 0.85F};
+            } else if (profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.DUELIST_AGGRESSIVE) {
+                float fwd = bot.isAttackReady() ? 1.0F : (distSq < 5.0D ? -0.75F : 0.25F);
+                input = new float[] {fwd, state.strafeDir * 0.95F};
             } else {
                 input = computeMeleeSpacingInput(distSq, bot.isAttackReady(), targetInvulnerable, false, false, state.strafeDir);
             }
-            MeleeCombatController.applyCombatStrafe(ctx, bot, target, state, input[0], input[1], !lowCeilingGap, now);
-            double effectiveRangeSq = lowCeilingGap ? LOW_GAP_ATTACK_RANGE_SQ : ATTACK_RANGE_SQ;
+            boolean allowSprint = !lowCeilingGap && (profile.prefersSprintHits() || bot.isAttackReady());
+            if (profile.prefersSprintHits() && bot.isAttackReady()) {
+                bot.setSprinting(true);
+            }
+            MeleeCombatController.applyCombatStrafe(ctx, bot, target, state, input[0], input[1], allowSprint, now);
+            double effectiveRangeSq = lowCeilingGap ? LOW_GAP_ATTACK_RANGE_SQ : Math.max(ATTACK_RANGE_SQ, profile.getAttackRangeSq());
             if (distSq <= effectiveRangeSq && bot.isAttackReady() && !targetInvulnerable) {
                 MeleeCombatController.performMeleeStrike(ctx, bot, target, state, now, coop);
             }
@@ -327,15 +352,16 @@ public final class CombatJobSupport {
         }
     }
 
-    static final class CombatTacticsState {
+    public static final class CombatTacticsState {
         long sTapUntilTick = -1L;
-        long bowChargeStartTick = -1L;
+        public long bowChargeStartTick = -1L;
         long bowCooldownUntilTick = -1L;
         long lastStrafeFlipTick = -1L;
         long lastEngagedTick = -1L;
         long nextAllyCheckTick = -1L;
+        int obstructedTicks = 0;
         boolean cachedNearbyAlly;
-        int activeTargetId = -1;
+        public int activeTargetId = -1;
         int strafeDir;
 
         CombatTacticsState(int initialFlankSign) {

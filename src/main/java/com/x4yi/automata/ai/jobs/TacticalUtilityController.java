@@ -11,6 +11,7 @@ import net.minecraft.init.SoundEvents;
 import net.minecraft.item.ItemEnderPearl;
 import net.minecraft.item.ItemShield;
 import net.minecraft.item.ItemStack;
+import net.minecraft.potion.PotionEffect;
 import net.minecraft.util.EnumHand;
 import net.minecraft.util.SoundCategory;
 import net.minecraft.util.math.BlockPos;
@@ -19,6 +20,7 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraftforge.items.IItemHandlerModifiable;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
+import com.x4yi.automata.ai.EquipmentSelector;
 import com.x4yi.automata.entity.EntityAutomaton;
 
 public final class TacticalUtilityController {
@@ -115,10 +117,54 @@ public final class TacticalUtilityController {
         if (threat instanceof EntityCreeper creeper && creeper.getCreeperState() > 0 && distSq <= 36.0D) {
             return true;
         }
-        if (threat instanceof IRangedAttackMob && distSq <= 256.0D && bot.canEntityBeSeen(threat)) {
+        if ((threat instanceof IRangedAttackMob || AdaptiveThreatAnalyzer.isRangedOrSpecialThreat(threat))
+                && distSq <= 256.0D
+                && bot.canEntityBeSeen(threat)) {
             return !bot.isAttackReady() || distSq > 16.0D;
         }
         return distSq <= 12.25D && !bot.isAttackReady();
+    }
+
+    public static boolean tryDrinkConsumable(AutomatonAIContext ctx) {
+        EntityAutomaton bot = ctx.getAutomaton();
+        if (bot.isEating() || bot.ticksExisted % 20 != 0) {
+            return false;
+        }
+        boolean needsHeal = bot.getHealthRatio() < 0.55F;
+        boolean hasBadEffect = hasNegativePotionEffect(bot);
+        if (!needsHeal && !hasBadEffect) {
+            return false;
+        }
+        int slot = EquipmentSelector.findHealingOrCureConsumableSlot(bot, needsHeal, hasBadEffect);
+        if (slot < 0) {
+            return false;
+        }
+        IItemHandlerModifiable inv = bot.getInventory().getCombinedInventory();
+        ItemStack stack = inv.extractItem(slot, 1, false);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        ItemStack result = stack.getItem().onItemUseFinish(stack, bot.world, bot);
+        if (!result.isEmpty()) {
+            ItemStack remainder = inv.insertItem(slot, result, false);
+            for (int i = 0; i < inv.getSlots() && !remainder.isEmpty(); i++) {
+                remainder = inv.insertItem(i, remainder, false);
+            }
+            if (!remainder.isEmpty()) {
+                bot.entityDropItem(remainder, 0.0F);
+            }
+        }
+        bot.playSound(SoundEvents.ENTITY_GENERIC_DRINK, 0.7F, 1.0F);
+        return true;
+    }
+
+    private static boolean hasNegativePotionEffect(EntityAutomaton bot) {
+        for (PotionEffect effect : bot.getActivePotionEffects()) {
+            if (effect.getPotion().isBadEffect()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean hasEnderPearl(EntityAutomaton bot) {

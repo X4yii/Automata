@@ -92,9 +92,15 @@ final class CombatTargetingService {
                     && isThreateningAnyAlly(candidate, vulnerableAllies, ALLY_PROTECT_RADIUS_SQ);
             boolean threatensHealthy = !healthyAllies.isEmpty()
                     && isThreateningAnyAlly(candidate, healthyAllies, HEALTHY_ALLY_PROTECT_RADIUS_SQ);
-            boolean rangedThreat = candidate instanceof IRangedAttackMob && bot.canEntityBeSeen(candidate);
+            boolean rangedThreat = AdaptiveThreatAnalyzer.isRangedOrSpecialThreat(candidate)
+                    && bot.canEntityBeSeen(candidate);
+            boolean aerial = AdaptiveThreatAnalyzer.isAerialThreat(bot, candidate);
+            boolean bossOrHigh = AdaptiveThreatAnalyzer.isBossOrHighThreat(candidate);
+            boolean srp = AdaptiveThreatAnalyzer.isSrpParasite(candidate);
             double score = computeTacticalTargetScore(
-                    distSq, primedCreeper, threatensVulnerable, threatensHealthy, rangedThreat);
+                    distSq, primedCreeper, threatensVulnerable, threatensHealthy, rangedThreat)
+                    * AdaptiveThreatAnalyzer.computeThreatPriorityMultiplier(
+                            false, aerial, false, bossOrHigh, srp);
 
             boolean contested = squadCoop
                     && !primedCreeper

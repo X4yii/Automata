@@ -13,14 +13,16 @@ import javax.annotation.Nullable;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.EnumFacing;
+import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.text.TextComponentString;
 import net.minecraft.world.WorldServer;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
-import com.x4yi.automata.ai.AutomatonJobType;
 import com.x4yi.automata.ai.IAutomatonJob;
+import com.x4yi.automata.api.AutomataAPI;
 import com.x4yi.automata.api.AutomatonBuiltInJobs;
+import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.config.AutomataConfig;
 import com.x4yi.automata.entity.EntityAutomaton;
 
@@ -45,12 +47,18 @@ public class MineJob implements IAutomatonJob {
     private int veinStallTicks;
 
     @Override
-    public AutomatonJobType getType() {
-        return AutomatonJobType.MINE;
+    public ResourceLocation getJobId() {
+        return AutomatonBuiltInJobs.MINE;
     }
 
     @Override
-    public void onStop(AutomatonAIContext ctx) {
+    public boolean hasCommittedWork(IAutomatonContext ctx) {
+        return hasActiveCommittedWork();
+    }
+
+    @Override
+    public void onStop(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         if (cachedTarget != null) {
             JobBlockSupport.release(ctx, cachedTarget);
             cachedTarget = null;
@@ -80,7 +88,8 @@ public class MineJob implements IAutomatonJob {
     }
 
     @Override
-    public void tick(AutomatonAIContext ctx) {
+    public void tick(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         EntityAutomaton bot = ctx.getAutomaton();
         WorldServer world = ctx.getWorld();
         long now = ctx.getWorldTime();

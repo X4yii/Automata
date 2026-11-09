@@ -5,13 +5,38 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
+
 import net.minecraft.util.math.BlockPos;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import com.x4yi.automata.api.AutomataAPI;
 import com.x4yi.automata.api.AutomatonBuiltInJobs;
 
 class ModdedOreCatalogTest {
+
+    @AfterEach
+    void resetCatalog() {
+        ModdedOreCatalog.resetDefaultsForTest();
+    }
+
+    @Test
+    void supportsConfigPatternsMetaAndBlacklist(@TempDir Path tempDir) {
+        ModdedOreCatalog.init(tempDir.toFile());
+        assertTrue(tempDir.resolve("automata_ores.cfg").toFile().isFile());
+        assertTrue(ModdedOreCatalog.isKnownModdedOreId("thermalfoundation:ore"));
+
+        ModdedOreCatalog.applyRulesForTest(
+                new String[] {"custom:mineral@3"},
+                new String[] {"*:*_ore"},
+                new String[] {"custom:fake_ore", "custom:mineral@2"});
+        assertTrue(ModdedOreCatalog.isKnownModdedOreId("custom:mineral", 3));
+        assertFalse(ModdedOreCatalog.isKnownModdedOreId("custom:mineral", 2));
+        assertTrue(ModdedOreCatalog.isKnownModdedOreId("some_mod:mythril_ore", 0));
+        assertFalse(ModdedOreCatalog.isKnownModdedOreId("custom:fake_ore", 0));
+    }
 
     @Test
     void recognizesKnownModdedOresAndRejectsNonOres() {
