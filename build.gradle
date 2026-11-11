@@ -83,6 +83,10 @@ tasks.withType(Test).configureEach {
     useJUnitPlatform()
 }
 
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ['--source', '21', '--target', '21']
+}
+
 cleanroom {
     runs {
         client {
@@ -125,6 +129,10 @@ tasks.withType(Checkstyle).configureEach {
 
 tasks.matching { it.name in ['clearSkiesCheck', 'formatJavaCheck'] }.configureEach {
     enabled = enable_formatting.toBoolean()
+}
+
+tasks.withType(Test).configureEach {
+    maxParallelForks = 1
 }
 
 // TODO: fundamental Foundation issue

@@ -2,18 +2,20 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - 'develop/**'
+    branches: [ main, master ]
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, review_requested]
-  workflow_dispatch:
-
-permissions:
-  contents: read
+    branches: [ main, master ]
 
 jobs:
-  build:
-    uses: CleanroomMC/Conventions/.github/workflows/build.yml@1.4.0
-    with:
-      release-branch: main
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+      - name: Run check and build
+        run: ./gradlew check build --no-daemon
