@@ -34,7 +34,13 @@ import com.x4yi.automata.navigation.PathfindingExecutor;
 import com.x4yi.automata.world.AutomatonCampGenerator;
 import com.x4yi.automata.world.AutomatonChunkLoader;
 
-@Mod(modid = AutomataMod.MOD_ID, name = AutomataMod.MOD_NAME, version = AutomataMod.VERSION)
+@Mod(
+        modid = AutomataMod.MOD_ID,
+        name = AutomataMod.MOD_NAME,
+        version = AutomataMod.VERSION,
+        dependencies = "required-after:x4ui@[r1.0b6];after:waila;after:hwyla;after:jei",
+        guiFactory = "com.x4yi.automata.client.gui.config.AutomataGuiFactory"
+)
 public class AutomataMod {
 
     public static final String MOD_ID = "@{MOD_ID}";
@@ -49,6 +55,7 @@ public class AutomataMod {
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
         LOGGER.info("Initializing {} v{}", MOD_NAME, VERSION);
+        com.x4yi.automata.ai.jobs.ModdedOreCatalog.init(event.getModConfigurationDirectory());
         AutomataAPI.ensureBuiltInsRegistered();
         ForgeChunkManager.setForcedChunkLoadingCallback(this, new AutomatonChunkLoader.Callback());
         GameRegistry.registerWorldGenerator(new AutomatonCampGenerator(), 10);
@@ -97,7 +104,12 @@ public class AutomataMod {
                     Entity entity = player.world.getEntityByID(data.getInteger("entityId"));
                     if (entity instanceof EntityAutomaton bot && !bot.isDead && player.getDistanceSq(bot) <= 121.0D) {
                         ItemAutomaStaff.handleRemoteLeftClickEntity(
-                                player, held, bot, data.getBoolean("ctrl"), data.getBoolean("sneak"));
+                                player,
+                                held,
+                                bot,
+                                data.getBoolean("ctrl"),
+                                data.getBoolean("sneak"),
+                                com.x4yi.automata.item.AutomaStaffMode.fromName(data.getString("staffMode")));
                     }
                 });
         UINetwork.registerActionHandler(
@@ -114,7 +126,12 @@ public class AutomataMod {
                     BlockPos pos = BlockPos.fromLong(data.getLong("pos"));
                     if (player.getDistanceSqToCenter(pos) <= 121.0D) {
                         ItemAutomaStaff.handleRemoteLeftClickBlock(
-                                player, held, worldServer, pos, data.getBoolean("sneak"));
+                                player,
+                                held,
+                                worldServer,
+                                pos,
+                                data.getBoolean("sneak"),
+                                com.x4yi.automata.item.AutomaStaffMode.fromName(data.getString("staffMode")));
                     }
                 });
         UINetwork.registerActionHandler(
@@ -155,7 +172,12 @@ public class AutomataMod {
                     Entity entity = player.world.getEntityByID(data.getInteger("entityId"));
                     if (entity instanceof EntityAutomaton bot && !bot.isDead && player.getDistanceSq(bot) <= 121.0D) {
                         ItemAutomaStaff.handleRemoteLeftClickEntity(
-                                player, held, bot, data.getBoolean("ctrl"), data.getBoolean("sneak"));
+                                player,
+                                held,
+                                bot,
+                                data.getBoolean("ctrl"),
+                                data.getBoolean("sneak"),
+                                com.x4yi.automata.item.AutomaStaffMode.fromName(data.getString("staffMode")));
                     }
                 });
         UINetwork.registerActionHandler(
@@ -172,7 +194,12 @@ public class AutomataMod {
                     BlockPos pos = BlockPos.fromLong(data.getLong("pos"));
                     if (player.getDistanceSqToCenter(pos) <= 121.0D) {
                         ItemAutomaStaff.handleRemoteLeftClickBlock(
-                                player, held, worldServer, pos, data.getBoolean("sneak"));
+                                player,
+                                held,
+                                worldServer,
+                                pos,
+                                data.getBoolean("sneak"),
+                                com.x4yi.automata.item.AutomaStaffMode.fromName(data.getString("staffMode")));
                     }
                 });
     }
@@ -180,6 +207,12 @@ public class AutomataMod {
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
         AutomataAPI.fireJobRegisterEvent();
+        com.x4yi.automata.compat.SrpCompat.syncConfig();
+    }
+
+    @Mod.EventHandler
+    public void postInit(net.minecraftforge.fml.common.event.FMLPostInitializationEvent event) {
+        com.x4yi.automata.compat.SrpCompat.syncConfig();
     }
 
     @Mod.EventHandler

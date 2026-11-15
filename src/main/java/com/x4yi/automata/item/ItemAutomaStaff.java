@@ -172,18 +172,48 @@ public class ItemAutomaStaff extends Item {
             EntityAutomaton bot,
             boolean ctrlPressed,
             boolean sneakPressed) {
+        return handleRemoteLeftClickEntity(player, stack, bot, ctrlPressed, sneakPressed, null);
+    }
+
+    public static boolean handleRemoteLeftClickEntity(
+            EntityPlayer player,
+            ItemStack stack,
+            EntityAutomaton bot,
+            boolean ctrlPressed,
+            boolean sneakPressed,
+            @Nullable AutomaStaffMode mode) {
         if (!canControl(player, bot)) {
             return true;
         }
-        if (ctrlPressed && AutomatonBuiltInJobs.MINE.equals(bot.getTaskConfig().getJobId())) {
-            bindAutomaton(stack, bot);
-            getOrCreateTag(stack).setBoolean(TAG_MINER_TARGET_MODE, true);
-            player.sendStatusMessage(
-                    new TextComponentString("Minero vinculado: haz click izquierdo sobre una veta de minerales"),
-                    true);
+        if (mode == AutomaStaffMode.TOGGLE_FOLLOW) {
+            if (ctrlPressed && AutomatonBuiltInJobs.MINE.equals(bot.getTaskConfig().getJobId())) {
+                // Allow MineJob vein bind if player specifically wants Follow/Stay, fall through to toggle below.
+            }
+            com.x4yi.automata.ai.TaskCompletionBehavior current = bot.getTaskConfig().getCompletionBehavior();
+            com.x4yi.automata.ai.TaskCompletionBehavior next =
+                    current == com.x4yi.automata.ai.TaskCompletionBehavior.FOLLOW_OWNER
+                            ? com.x4yi.automata.ai.TaskCompletionBehavior.STAY_PUT
+                            : com.x4yi.automata.ai.TaskCompletionBehavior.FOLLOW_OWNER;
+            bot.getTaskConfig().setCompletionBehavior(next);
+            String key = next == com.x4yi.automata.ai.TaskCompletionBehavior.FOLLOW_OWNER
+                    ? "message.automata.follow_enabled"
+                    : "message.automata.stay_enabled";
+            player.sendStatusMessage(new TextComponentTranslation(key, bot.getDisplayName()), true);
             return true;
         }
-        if (sneakPressed) {
+        if (mode == AutomaStaffMode.SELECT_ZONE) {
+            bindAutomaton(stack, bot);
+            NBTTagCompound tag = getOrCreateTag(stack);
+            if (tag.hasKey(TAG_POS1) && tag.hasKey(TAG_POS2) && !MineJob.rejectAreaIfMiner(player, bot)) {
+                bot.getTaskConfig().setPos1(BlockPos.fromLong(tag.getLong(TAG_POS1)));
+                bot.getTaskConfig().setPos2(BlockPos.fromLong(tag.getLong(TAG_POS2)));
+                player.sendStatusMessage(new TextComponentTranslation("message.automata.region_applied"), true);
+            } else {
+                player.sendStatusMessage(new TextComponentTranslation("message.automata.staff_bound", bot.getDisplayName()), true);
+            }
+            return true;
+        }
+        if (mode == AutomaStaffMode.ASSIGN_CHEST || (mode == null && sneakPressed)) {
             bindAutomaton(stack, bot);
             getOrCreateTag(stack).setBoolean(TAG_MINER_TARGET_MODE, false);
             BlockPos chest = getChestPos(stack);
@@ -203,6 +233,15 @@ public class ItemAutomaStaff extends Item {
             }
             return true;
         }
+        if (mode == null && ctrlPressed && AutomatonBuiltInJobs.MINE.equals(bot.getTaskConfig().getJobId())) {
+            bindAutomaton(stack, bot);
+            getOrCreateTag(stack).setBoolean(TAG_MINER_TARGET_MODE, true);
+            player.sendStatusMessage(
+                    new TextComponentString("Minero vinculado: haz click izquierdo sobre una veta de minerales"),
+                    true);
+            return true;
+        }
+        // WHIP (or fallback)
         bot.getBrain().nudgeUnstick();
         bot.world.playSound(
                 null,
@@ -235,6 +274,16 @@ public class ItemAutomaStaff extends Item {
             WorldServer world,
             BlockPos pos,
             boolean sneakPressed) {
+        handleRemoteLeftClickBlock(player, stack, world, pos, sneakPressed, null);
+    }
+
+    public static void handleRemoteLeftClickBlock(
+            EntityPlayer player,
+            ItemStack stack,
+            WorldServer world,
+            BlockPos pos,
+            boolean sneakPressed,
+            @Nullable AutomaStaffMode mode) {
         if (isMinerTargetMode(stack) && ModdedOreCatalog.isOreBlock(world, pos, world.getBlockState(pos))) {
             EntityAutomaton bound = resolveBoundAutomaton(world, stack);
             if (bound != null && canControl(player, bound)
@@ -250,7 +299,30 @@ public class ItemAutomaStaff extends Item {
                 }
             }
         }
-        if (sneakPressed && LogisticsService.resolveItemHandler(world.getTileEntity(pos)) != null) {
+        if (mode == AutomaStaffMode.SELECT_ZONE) {
+            NBTTagCompound tag = getOrCreateTag(stack);
+            EntityAutomaton bound = resolveBoundAutomaton(world, stack);
+            if (sneakPressed) {
+                tag.setLong(TAG_POS2, pos.toLong());
+                if (bound != null && canControl(player, bound) && !MineJob.rejectAreaIfMiner(player, bound)) {
+                    bound.getTaskConfig().setPos2(pos);
+                }
+                player.sendStatusMessage(
+                        new TextComponentTranslation("message.automata.pos2_set", pos.getX(), pos.getY(), pos.getZ()),
+                        true);
+            } else {
+                tag.setLong(TAG_POS1, pos.toLong());
+                if (bound != null && canControl(player, bound) && !MineJob.rejectAreaIfMiner(player, bound)) {
+                    bound.getTaskConfig().setPos1(pos);
+                }
+                player.sendStatusMessage(
+                        new TextComponentTranslation("message.automata.pos1_set", pos.getX(), pos.getY(), pos.getZ()),
+                        true);
+            }
+            return;
+        }
+        if ((mode == AutomaStaffMode.ASSIGN_CHEST || (mode == null && sneakPressed))
+                && LogisticsService.resolveItemHandler(world.getTileEntity(pos)) != null) {
             getOrCreateTag(stack).setLong(TAG_CHEST_POS, pos.toLong());
             EntityAutomaton bound = resolveBoundAutomaton(world, stack);
             if (bound != null && canControl(player, bound)) {
