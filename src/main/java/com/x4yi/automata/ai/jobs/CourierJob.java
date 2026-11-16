@@ -4,6 +4,7 @@ package com.x4yi.automata.ai.jobs;
 import net.minecraft.item.ItemFood;
 import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;
 import net.minecraftforge.items.CapabilityItemHandler;
 import net.minecraftforge.items.IItemHandler;
@@ -11,50 +12,25 @@ import net.minecraftforge.items.IItemHandlerModifiable;
 import net.minecraftforge.items.ItemHandlerHelper;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
-import com.x4yi.automata.ai.AutomatonJobType;
 import com.x4yi.automata.ai.IAutomatonJob;
 import com.x4yi.automata.ai.TaskCompletionService;
+import com.x4yi.automata.api.AutomataAPI;
+import com.x4yi.automata.api.AutomatonBuiltInJobs;
+import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.entity.EntityAutomaton;
 
 public class CourierJob implements IAutomatonJob {
 
     @Override
-    public AutomatonJobType getType() {
-        return AutomatonJobType.COURIER;
+    public ResourceLocation getJobId() {
+        return AutomatonBuiltInJobs.COURIER;
     }
 
     @Override
-    public void tick(AutomatonAIContext ctx) {
-        BlockPos sourcePos = ctx.getTaskConfig().getSourceChest();
-        BlockPos destPos = ctx.getTaskConfig().getDepositChest();
-        if (sourcePos == null || destPos == null) {
-            return;
-        }
-
-        EntityAutomaton bot = ctx.getAutomaton();
-        IItemHandlerModifiable botInv = bot.getInventory().getCombinedInventory();
-        boolean hasCarryItems = hasTransferableItems(botInv);
-
-        if (!hasCarryItems) {
-            bot.getChunkLoader().setExtraWorkChunk(sourcePos);
-            if (!JobBlockSupport.isWithinReach(bot, sourcePos)) {
-                ctx.requestPathTo(sourcePos, false);
-                return;
-            }
-            ctx.stopNavigation();
-            pullFromContainer(ctx, sourcePos, botInv);
-            if (!hasTransferableItems(botInv)) {
-                TaskCompletionService.completeTask(ctx, "Courier");
-            }
-        } else {
-            bot.getChunkLoader().setExtraWorkChunk(destPos);
-            if (!JobBlockSupport.isWithinReach(bot, destPos)) {
-                ctx.requestPathTo(destPos, false);
-                return;
-            }
-            ctx.stopNavigation();
-            pushToContainer(ctx, destPos, botInv);
-        }
+    public void tick(IAutomatonContext publicCtx) {
+        // CourierJob is currently in design; mechanic intentionally disabled for v1.0.0.
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
+        ctx.stopNavigation();
     }
 
     private static boolean hasTransferableItems(IItemHandler inv) {
