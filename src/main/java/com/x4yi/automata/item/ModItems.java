@@ -18,12 +18,13 @@ public final class ModItems {
 
     public static final ItemComidaConAlas COMIDA_CON_ALAS = new ItemComidaConAlas();
     public static final ItemAutomaStaff AUTOMA_STAFF = new ItemAutomaStaff();
+    public static final ItemAutomaDevStaff AUTOMA_DEV_STAFF = new ItemAutomaDevStaff();
 
     private ModItems() {}
 
     @SubscribeEvent
     public static void registerItems(RegistryEvent.Register<Item> event) {
-        event.getRegistry().registerAll(COMIDA_CON_ALAS, AUTOMA_STAFF);
+        event.getRegistry().registerAll(COMIDA_CON_ALAS, AUTOMA_STAFF, AUTOMA_DEV_STAFF);
     }
 
     @SideOnly(Side.CLIENT)
@@ -37,6 +38,10 @@ public final class ModItems {
                 AUTOMA_STAFF,
                 0,
                 new ModelResourceLocation(AUTOMA_STAFF.getRegistryName(), "inventory"));
+        ModelLoader.setCustomModelResourceLocation(
+                AUTOMA_DEV_STAFF,
+                0,
+                new ModelResourceLocation(AUTOMA_DEV_STAFF.getRegistryName(), "inventory"));
     }
 }
 

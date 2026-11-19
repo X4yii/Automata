@@ -26,9 +26,6 @@ import net.minecraft.util.text.TextComponentTranslation;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.util.Constants;
-import net.minecraftforge.event.entity.player.PlayerInteractEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 
@@ -40,14 +37,16 @@ import com.x4yi.automata.ai.jobs.ModdedOreCatalog;
 import com.x4yi.automata.api.AutomatonBuiltInJobs;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-@Mod.EventBusSubscriber(modid = AutomataMod.MOD_ID)
 public class ItemAutomaStaff extends Item {
 
     private static final String TAG_POS1 = "Pos1";
     private static final String TAG_POS2 = "Pos2";
     private static final String TAG_CHEST_POS = "ChestPos";
+    private static final String TAG_SAVING_CHEST_POS = "SavingChestPos";
+    private static final String TAG_SOURCE_CHEST_POS = "SourceChestPos";
     private static final String TAG_BOUND_UUID = "BoundAutomatonUuid";
     private static final String TAG_MINER_TARGET_MODE = "MinerTargetMode";
+    private static final String TAG_STAFF_MODE = "StaffMode";
 
     public ItemAutomaStaff() {
         setRegistryName(AutomataMod.MOD_ID, "automa_staff");
@@ -71,6 +70,16 @@ public class ItemAutomaStaff extends Item {
             return EnumActionResult.SUCCESS;
         }
         ItemStack stack = player.getHeldItem(hand);
+        AutomaStaffMode mode = getActiveMode(stack);
+        if (mode == AutomaStaffMode.ASSIGN_SAVING_CHEST || mode == AutomaStaffMode.ASSIGN_SOURCE_CHEST) {
+            if (worldIn instanceof WorldServer worldServer) {
+                handleRemoteLeftClickBlock(player, stack, worldServer, pos, player.isSneaking(), mode);
+            }
+            return EnumActionResult.SUCCESS;
+        }
+        if (mode != AutomaStaffMode.SELECT_ZONE) {
+            return EnumActionResult.PASS;
+        }
         NBTTagCompound tag = getOrCreateTag(stack);
         EntityAutomaton bound = resolveBoundAutomaton(worldIn, stack);
         if (player.isSneaking()) {
@@ -113,6 +122,16 @@ public class ItemAutomaStaff extends Item {
         }
         if (!canControl(playerIn, bot)) {
             return false;
+        }
+        AutomaStaffMode mode = getActiveMode(stack);
+        if (mode != AutomaStaffMode.SELECT_ZONE) {
+            return handleRemoteLeftClickEntity(
+                    playerIn,
+                    stack,
+                    bot,
+                    mode == AutomaStaffMode.TOGGLE_FOLLOW,
+                    playerIn.isSneaking(),
+                    mode);
         }
         if (playerIn.isSneaking()) {
             bindAutomaton(stack, bot);
@@ -187,7 +206,6 @@ public class ItemAutomaStaff extends Item {
         }
         if (mode == AutomaStaffMode.TOGGLE_FOLLOW) {
             if (ctrlPressed && AutomatonBuiltInJobs.MINE.equals(bot.getTaskConfig().getJobId())) {
-                // Allow MineJob vein bind if player specifically wants Follow/Stay, fall through to toggle below.
             }
             com.x4yi.automata.ai.TaskCompletionBehavior current = bot.getTaskConfig().getCompletionBehavior();
             com.x4yi.automata.ai.TaskCompletionBehavior next =
@@ -213,12 +231,12 @@ public class ItemAutomaStaff extends Item {
             }
             return true;
         }
-        if (mode == AutomaStaffMode.ASSIGN_CHEST || (mode == null && sneakPressed)) {
+        if (mode == AutomaStaffMode.ASSIGN_SAVING_CHEST || (mode == null && sneakPressed)) {
             bindAutomaton(stack, bot);
             getOrCreateTag(stack).setBoolean(TAG_MINER_TARGET_MODE, false);
-            BlockPos chest = getChestPos(stack);
+            BlockPos chest = getSavingChestPos(stack);
             if (chest != null) {
-                bot.getTaskConfig().setDepositChest(chest);
+                bot.getTaskConfig().setSavingChest(chest);
                 player.sendStatusMessage(
                         new TextComponentTranslation(
                                 "message.automata.chest_assigned",
@@ -233,15 +251,34 @@ public class ItemAutomaStaff extends Item {
             }
             return true;
         }
+        if (mode == AutomaStaffMode.ASSIGN_SOURCE_CHEST) {
+            bindAutomaton(stack, bot);
+            getOrCreateTag(stack).setBoolean(TAG_MINER_TARGET_MODE, false);
+            BlockPos chest = getSourceChestPos(stack);
+            if (chest != null) {
+                bot.getTaskConfig().setSourceChest(chest);
+                player.sendStatusMessage(
+                        new TextComponentTranslation(
+                                "message.automata.source_chest_assigned",
+                                chest.getX(),
+                                chest.getY(),
+                                chest.getZ()),
+                        true);
+            } else {
+                player.sendStatusMessage(
+                        new TextComponentTranslation("message.automata.staff_source_chest_select_bot", bot.getDisplayName()),
+                        true);
+            }
+            return true;
+        }
         if (mode == null && ctrlPressed && AutomatonBuiltInJobs.MINE.equals(bot.getTaskConfig().getJobId())) {
             bindAutomaton(stack, bot);
             getOrCreateTag(stack).setBoolean(TAG_MINER_TARGET_MODE, true);
             player.sendStatusMessage(
-                    new TextComponentString("Minero vinculado: haz click izquierdo sobre una veta de minerales"),
+                    new TextComponentTranslation("message.automata.staff_miner_bound"),
                     true);
             return true;
         }
-        // WHIP (or fallback)
         bot.getBrain().nudgeUnstick();
         bot.world.playSound(
                 null,
@@ -293,7 +330,7 @@ public class ItemAutomaStaff extends Item {
                     int veinSize = mineJob.commandVein(world, pos);
                     getOrCreateTag(stack).setBoolean(TAG_MINER_TARGET_MODE, false);
                     player.sendStatusMessage(
-                            new TextComponentString("Minero enviado a picar la veta (" + veinSize + " bloques)"),
+                            new TextComponentTranslation("message.automata.staff_miner_vein", veinSize),
                             true);
                     return;
                 }
@@ -321,12 +358,15 @@ public class ItemAutomaStaff extends Item {
             }
             return;
         }
-        if ((mode == AutomaStaffMode.ASSIGN_CHEST || (mode == null && sneakPressed))
-                && LogisticsService.resolveItemHandler(world.getTileEntity(pos)) != null) {
-            getOrCreateTag(stack).setLong(TAG_CHEST_POS, pos.toLong());
+        if (mode == AutomaStaffMode.ASSIGN_SAVING_CHEST || (mode == null && sneakPressed)) {
+            if (LogisticsService.resolveItemHandler(world.getTileEntity(pos)) == null) {
+                player.sendStatusMessage(new TextComponentTranslation("message.automata.not_a_chest"), true);
+                return;
+            }
+            getOrCreateTag(stack).setLong(TAG_SAVING_CHEST_POS, pos.toLong());
             EntityAutomaton bound = resolveBoundAutomaton(world, stack);
             if (bound != null && canControl(player, bound)) {
-                bound.getTaskConfig().setDepositChest(pos);
+                bound.getTaskConfig().setSavingChest(pos);
                 player.sendStatusMessage(
                         new TextComponentTranslation(
                                 "message.automata.chest_assigned",
@@ -343,53 +383,56 @@ public class ItemAutomaStaff extends Item {
                                 pos.getZ()),
                         true);
             }
+            return;
         }
+        if (mode == AutomaStaffMode.ASSIGN_SOURCE_CHEST) {
+            if (LogisticsService.resolveItemHandler(world.getTileEntity(pos)) == null) {
+                player.sendStatusMessage(new TextComponentTranslation("message.automata.not_a_chest"), true);
+                return;
+            }
+            getOrCreateTag(stack).setLong(TAG_SOURCE_CHEST_POS, pos.toLong());
+            EntityAutomaton bound = resolveBoundAutomaton(world, stack);
+            if (bound != null && canControl(player, bound)) {
+                bound.getTaskConfig().setSourceChest(pos);
+                player.sendStatusMessage(
+                        new TextComponentTranslation(
+                                "message.automata.source_chest_assigned",
+                                pos.getX(),
+                                pos.getY(),
+                                pos.getZ()),
+                        true);
+            } else {
+                player.sendStatusMessage(
+                        new TextComponentTranslation(
+                                "message.automata.source_chest_selected",
+                                pos.getX(),
+                                pos.getY(),
+                                pos.getZ()),
+                        true);
+            }
+        }
+    }
+
+    public static void setActiveMode(ItemStack stack, @Nullable AutomaStaffMode mode) {
+        if (mode != null) {
+            getOrCreateTag(stack).setString(TAG_STAFF_MODE, mode.name());
+        }
+    }
+
+    public static AutomaStaffMode getActiveMode(ItemStack stack) {
+        NBTTagCompound tag = stack.getTagCompound();
+        if (tag != null && tag.hasKey(TAG_STAFF_MODE, Constants.NBT.TAG_STRING)) {
+            AutomaStaffMode parsed = AutomaStaffMode.fromName(tag.getString(TAG_STAFF_MODE));
+            if (parsed != null) {
+                return parsed;
+            }
+        }
+        return AutomaStaffMode.SELECT_ZONE;
     }
 
     public static boolean isMinerTargetMode(ItemStack stack) {
         NBTTagCompound tag = stack.getTagCompound();
         return tag != null && tag.getBoolean(TAG_MINER_TARGET_MODE);
-    }
-
-    @SubscribeEvent
-    public static void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
-        EntityPlayer player = event.getEntityPlayer();
-        if (player == null || !player.isSneaking()) {
-            return;
-        }
-        ItemStack stack = event.getItemStack();
-        if (stack.isEmpty() || !(stack.getItem() instanceof ItemAutomaStaff)) {
-            return;
-        }
-        World world = event.getWorld();
-        BlockPos pos = event.getPos();
-        if (LogisticsService.resolveItemHandler(world.getTileEntity(pos)) == null) {
-            return;
-        }
-        event.setCanceled(true);
-        if (world.isRemote) {
-            return;
-        }
-        getOrCreateTag(stack).setLong(TAG_CHEST_POS, pos.toLong());
-        EntityAutomaton bound = resolveBoundAutomaton(world, stack);
-        if (bound != null && canControl(player, bound)) {
-            bound.getTaskConfig().setDepositChest(pos);
-            player.sendStatusMessage(
-                    new TextComponentTranslation(
-                            "message.automata.chest_assigned",
-                            pos.getX(),
-                            pos.getY(),
-                            pos.getZ()),
-                    true);
-        } else {
-            player.sendStatusMessage(
-                    new TextComponentTranslation(
-                            "message.automata.chest_selected",
-                            pos.getX(),
-                            pos.getY(),
-                            pos.getZ()),
-                    true);
-        }
     }
 
     private static boolean canControl(EntityPlayer player, EntityAutomaton bot) {
@@ -441,7 +484,18 @@ public class ItemAutomaStaff extends Item {
 
     @Nullable
     public static BlockPos getChestPos(ItemStack stack) {
-        return readTagPos(stack, TAG_CHEST_POS);
+        return getSavingChestPos(stack);
+    }
+
+    @Nullable
+    public static BlockPos getSavingChestPos(ItemStack stack) {
+        BlockPos saving = readTagPos(stack, TAG_SAVING_CHEST_POS);
+        return saving != null ? saving : readTagPos(stack, TAG_CHEST_POS);
+    }
+
+    @Nullable
+    public static BlockPos getSourceChestPos(ItemStack stack) {
+        return readTagPos(stack, TAG_SOURCE_CHEST_POS);
     }
 
     @Nullable
@@ -457,6 +511,23 @@ public class ItemAutomaStaff extends Item {
     @Override
     public void addInformation(ItemStack stack, @Nullable World worldIn, List<String> tooltip, ITooltipFlag flagIn) {
         tooltip.add(I18n.format("item.automata.automa_staff.tooltip"));
+        BlockPos p1 = getPos1(stack);
+        BlockPos p2 = getPos2(stack);
+        if (p1 != null || p2 != null) {
+            tooltip.add("A: " + formatPos(p1) + " | B: " + formatPos(p2));
+        }
+        BlockPos saving = getSavingChestPos(stack);
+        if (saving != null) {
+            tooltip.add("Saving: " + formatPos(saving));
+        }
+        BlockPos source = getSourceChestPos(stack);
+        if (source != null) {
+            tooltip.add("Source: " + formatPos(source));
+        }
+    }
+
+    private static String formatPos(@Nullable BlockPos pos) {
+        return pos == null ? "-" : pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
     }
 }
 

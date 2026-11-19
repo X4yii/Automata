@@ -23,10 +23,6 @@ import net.minecraftforge.fml.relauncher.SideOnly;
 import com.x4yi.automata.AutomataMod;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Winged food sword (9.0 total attack damage, 1.6 attack speed, 3200 durability).
- * Applies Nausea II and Slowness I for 5 seconds on hit, and can dismiss owned automata.
- */
 public class ItemComidaConAlas extends ItemSword {
 
     public static final ToolMaterial MATERIAL = EnumHelper.addToolMaterial(
