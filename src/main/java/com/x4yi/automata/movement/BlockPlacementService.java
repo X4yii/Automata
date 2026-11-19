@@ -26,15 +26,12 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.WorldServer;
 
 import com.x4yi.automata.ai.EquipmentSelector;
+import com.x4yi.automata.compat.ClaimProtectionCompat;
 import com.x4yi.automata.config.AutomataConfig;
 import com.x4yi.automata.entity.EntityAutomaton;
 import com.x4yi.automata.navigation.WorldCacheManager;
 import com.x4yi.automata.world.FakePlayerService;
 
-/**
- * Handles legitimate block placement using scaffold block validation, eye-line raytracing,
- * sneak-click safety, and human placement cooldowns.
- */
 public final class BlockPlacementService {
 
     public static final double MAX_PLACE_REACH = 4.5D;
@@ -50,6 +47,7 @@ public final class BlockPlacementService {
     };
 
     private int cooldownTicks;
+    private long lastPlacedBlockPacked = Long.MIN_VALUE;
 
     public void tickCooldown() {
         if (cooldownTicks > 0) {
@@ -59,6 +57,12 @@ public final class BlockPlacementService {
 
     public boolean isOnCooldown() {
         return cooldownTicks > 0;
+    }
+
+    public long consumeLastPlacedBlock() {
+        long val = lastPlacedBlockPacked;
+        lastPlacedBlockPacked = Long.MIN_VALUE;
+        return val;
     }
 
     public static boolean isValidScaffoldBlock(ItemStack stack) {
@@ -109,6 +113,9 @@ public final class BlockPlacementService {
             }
             return false;
         }
+        if (!ClaimProtectionCompat.canPlaceBlock(world, bot, targetPos, null)) {
+            return false;
+        }
         AxisAlignedBB blockBox = new AxisAlignedBB(targetPos);
         if (!world.getEntitiesWithinAABB(
                 EntityLivingBase.class,
@@ -156,6 +163,7 @@ public final class BlockPlacementService {
             if (res == EnumActionResult.SUCCESS && CellClassifier.isSolidSupport(world, targetPos)) {
                 WorldCacheManager.invalidateBlock(world, targetPos);
                 cooldownTicks = BASE_PLACE_COOLDOWN_TICKS + bot.getRNG().nextInt(2);
+                lastPlacedBlockPacked = targetPos.toLong();
                 return true;
             }
         }

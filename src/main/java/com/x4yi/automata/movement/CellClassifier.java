@@ -1,5 +1,8 @@
 package com.x4yi.automata.movement;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 import javax.annotation.Nullable;
 
 import net.minecraft.block.BlockDoor;
@@ -13,26 +16,52 @@ import net.minecraft.world.World;
 import com.x4yi.automata.config.AutomataConfig;
 import com.x4yi.automata.navigation.BlockCellType;
 
-/**
- * Unified block/cell classification shared across world caching, pathfinding, and movement.
- */
 public final class CellClassifier {
 
     private static final double PASSABLE_LAYER_MAX_Y = 0.25D;
+    private static final int MAX_PURE_STATE_CACHE = 4096;
+    private static final Map<IBlockState, Byte> PURE_STATE_CACHE = new ConcurrentHashMap<>(512);
 
     private CellClassifier() {}
 
+    public static void clearCache() {
+        PURE_STATE_CACHE.clear();
+    }
+
     public static byte classify(World world, BlockPos pos, IBlockState state) {
         Material mat = state.getMaterial();
+        if (mat == Material.AIR) {
+            return BlockCellType.AIR;
+        }
         if (mat == Material.LAVA || mat == Material.FIRE) {
             return BlockCellType.HAZARD;
         }
         if (mat == Material.WATER) {
             return BlockCellType.WATER;
         }
-        if (mat == Material.AIR) {
-            return BlockCellType.AIR;
+        if (isDoorOrGate(state) && mat != Material.IRON) {
+            net.minecraft.block.properties.PropertyBool openProp =
+                    state.getBlock() instanceof BlockDoor ? BlockDoor.OPEN : BlockFenceGate.OPEN;
+            if (Boolean.TRUE.equals(state.getValue(openProp))) {
+                return BlockCellType.AIR;
+            }
+            return BlockCellType.DOOR_CLOSED;
         }
+        if (state.isFullCube() && state.isOpaqueCube() && !state.getBlock().hasTileEntity(state)) {
+            Byte cached = PURE_STATE_CACHE.get(state);
+            if (cached != null) {
+                return cached;
+            }
+            byte computed = classifyUncached(world, pos, state);
+            if (PURE_STATE_CACHE.size() < MAX_PURE_STATE_CACHE) {
+                PURE_STATE_CACHE.putIfAbsent(state, computed);
+            }
+            return computed;
+        }
+        return classifyUncached(world, pos, state);
+    }
+
+    private static byte classifyUncached(World world, BlockPos pos, IBlockState state) {
         byte base = classifyCollisionBox(state.getCollisionBoundingBox(world, pos));
         if (base == BlockCellType.SOLID
                 && (state.getBlockHardness(world, pos) < 0.0F

@@ -17,10 +17,6 @@ import com.x4yi.automata.entity.EntityAutomaton;
 import com.x4yi.automata.world.FakePlayerService;
 import com.x4yi.automata.world.MiningProgressController;
 
-/**
- * Handles legitimate terrain breaking for cave stairs and tunnels, including
- * ascending headroom clearance (cy+2), door/gate interaction, and 6-neighbor hazard checks.
- */
 public final class TerrainBreaker {
 
     private TerrainBreaker() {}
@@ -36,7 +32,6 @@ public final class TerrainBreaker {
         int botX = MathHelper.floor(bot.posX);
         int botZ = MathHelper.floor(bot.posZ);
 
-        // When carving ascending cave stairs, clear (cx, cy+2, cz) above the bot's current head first.
         if (stepY > botY) {
             BlockPos currentCeiling = new BlockPos(botX, botY + 2, botZ);
             if (!tryClearSingleBlock(world, bot, controller, currentCeiling)) {
@@ -114,13 +109,13 @@ public final class TerrainBreaker {
         return false;
     }
 
-    private static boolean tryOpenDoorOrGate(
+    public static boolean tryOpenDoorOrGate(
             WorldServer world,
             EntityAutomaton bot,
             HumanMovementController controller,
             BlockPos pos,
             IBlockState state) {
-        if (!CellClassifier.isDoorOrGate(state)) {
+        if (!CellClassifier.isDoorOrGate(state) || state.getMaterial() == net.minecraft.block.material.Material.IRON) {
             return false;
         }
         PropertyBool openProp = state.getBlock() instanceof BlockDoor ? BlockDoor.OPEN : BlockFenceGate.OPEN;
@@ -136,7 +131,13 @@ public final class TerrainBreaker {
         EnumActionResult res = FakePlayerService.tryUseItemOnBlock(
                 world, bot, EnumHand.MAIN_HAND, pos, EnumFacing.NORTH, 0.5F, 0.5F, 0.5F);
         bot.setSneaking(prevSneak);
-        return res == EnumActionResult.SUCCESS;
+        if (res == EnumActionResult.SUCCESS) {
+            com.x4yi.automata.navigation.WorldCacheManager.invalidateBlock(world, pos);
+            com.x4yi.automata.navigation.WorldCacheManager.invalidateBlock(world, pos.up());
+            com.x4yi.automata.navigation.WorldCacheManager.invalidateBlock(world, pos.down());
+            return true;
+        }
+        return false;
     }
 }
 
