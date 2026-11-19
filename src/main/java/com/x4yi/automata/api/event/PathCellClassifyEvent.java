@@ -5,10 +5,6 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraftforge.fml.common.eventhandler.Event;
 
-/**
- * Fired when {@code WorldCacheManager} classifies a block into a {@code BlockCellType} for pathfinding.
- * Addons may override {@link #setCellType(byte)} for custom modded blocks.
- */
 public class PathCellClassifyEvent extends Event {
 
     private final World world;

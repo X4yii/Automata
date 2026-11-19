@@ -7,12 +7,11 @@ import net.minecraft.world.WorldServer;
 import net.minecraftforge.items.IItemHandlerModifiable;
 
 import com.x4yi.automata.ai.AutomatonTaskConfig;
+import com.x4yi.automata.ai.BotLoadoutProfile;
 import com.x4yi.automata.entity.EntityAutomaton;
+import com.x4yi.automata.movement.MovementPace;
 import com.x4yi.automata.navigation.PathfindingSettings;
 
-/**
- * Public context exposed to custom and built-in automaton jobs.
- */
 public interface IAutomatonContext {
 
     EntityAutomaton getAutomaton();
@@ -29,6 +28,14 @@ public interface IAutomatonContext {
     void requestPath(BlockPos goal, PathfindingSettings settings, boolean allowCooldownBypass);
 
     void cancelMovement();
+
+    void pauseMovement();
+
+    MovementPace getMovementPace();
+
+    void setMovementPace(MovementPace pace);
+
+    BotLoadoutProfile getLoadoutProfile();
 
     boolean isGoalOnCooldown(BlockPos goal, long now);
 

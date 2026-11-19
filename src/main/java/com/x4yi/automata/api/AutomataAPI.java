@@ -15,21 +15,19 @@ import net.minecraftforge.common.MinecraftForge;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
 import com.x4yi.automata.ai.EquipmentSelector;
+import com.x4yi.automata.ai.jobs.AdaptiveThreatAnalyzer;
+import com.x4yi.automata.ai.jobs.AggressiveGuardJob;
 import com.x4yi.automata.ai.jobs.CombatJobSupport;
 import com.x4yi.automata.ai.jobs.CourierJob;
-import com.x4yi.automata.ai.jobs.CrazyDefendJob;
-import com.x4yi.automata.ai.jobs.DefendJob;
 import com.x4yi.automata.ai.jobs.ExcavationJob;
 import com.x4yi.automata.ai.jobs.FarmerJob;
+import com.x4yi.automata.ai.jobs.GuardJob;
 import com.x4yi.automata.ai.jobs.IdleJob;
 import com.x4yi.automata.ai.jobs.LumberjackJob;
 import com.x4yi.automata.ai.jobs.MineJob;
 import com.x4yi.automata.ai.jobs.RoamJob;
-import com.x4yi.automata.movement.HumanMovementController.MovementMood;
+import com.x4yi.automata.movement.MovementPace;
 
-/**
- * Public entry point for addons and built-in automata content.
- */
 public final class AutomataAPI {
 
     private static final AutomatonJobRegistry JOB_REGISTRY = new AutomatonJobRegistry();
@@ -91,13 +89,17 @@ public final class AutomataAPI {
         return CombatJobSupport.isValidCombatCandidate(requireInternalContext(ctx), candidate);
     }
 
+    public static void registerThreatTraitDetector(AdaptiveThreatAnalyzer.ThreatTraitDetector detector) {
+        AdaptiveThreatAnalyzer.registerTraitDetector(detector);
+    }
+
     public static synchronized void ensureBuiltInsRegistered() {
         if (initialized) {
             return;
         }
         registerBuiltIn(
                 AutomatonBuiltInJobs.IDLE,
-                MovementMood.CHILL,
+                MovementPace.NORMAL,
                 false,
                 false,
                 0,
@@ -105,7 +107,7 @@ public final class AutomataAPI {
                 IdleJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.EXCAVATION,
-                MovementMood.CHILL,
+                MovementPace.NORMAL,
                 true,
                 false,
                 0,
@@ -113,7 +115,7 @@ public final class AutomataAPI {
                 ExcavationJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.MINE,
-                MovementMood.CHILL,
+                MovementPace.NORMAL,
                 true,
                 false,
                 0,
@@ -121,7 +123,7 @@ public final class AutomataAPI {
                 MineJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.LUMBERJACK,
-                MovementMood.CHILL,
+                MovementPace.NORMAL,
                 true,
                 false,
                 0,
@@ -129,31 +131,31 @@ public final class AutomataAPI {
                 LumberjackJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.FARMER,
-                MovementMood.CHILL,
+                MovementPace.NORMAL,
                 true,
                 false,
                 0,
                 EquipmentSelector::isHoe,
                 FarmerJob::new);
         registerBuiltIn(
-                AutomatonBuiltInJobs.DEFEND,
-                MovementMood.TRYHARD,
+                AutomatonBuiltInJobs.GUARD,
+                MovementPace.FAST,
                 false,
                 true,
                 2,
-                stack -> stack.getItem() instanceof ItemSword,
-                DefendJob::new);
+                EquipmentSelector::isCombatWeapon,
+                GuardJob::new);
         registerBuiltIn(
-                AutomatonBuiltInJobs.CRAZY_DEFEND,
-                MovementMood.TRYHARD,
+                AutomatonBuiltInJobs.AGGRESSIVE_GUARD,
+                MovementPace.FAST,
                 false,
                 true,
                 2,
-                stack -> stack.getItem() instanceof ItemSword,
-                CrazyDefendJob::new);
+                EquipmentSelector::isCombatWeapon,
+                AggressiveGuardJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.COURIER,
-                MovementMood.CHILL,
+                MovementPace.NORMAL,
                 false,
                 false,
                 0,
@@ -161,25 +163,25 @@ public final class AutomataAPI {
                 CourierJob::new);
         registerBuiltIn(
                 AutomatonBuiltInJobs.ROAM,
-                MovementMood.CHILL,
+                MovementPace.NORMAL,
                 false,
                 true,
                 2,
-                stack -> stack.getItem() instanceof ItemSword,
+                EquipmentSelector::isCombatWeapon,
                 RoamJob::new);
         initialized = true;
     }
 
     private static void registerBuiltIn(
             ResourceLocation id,
-            MovementMood mood,
+            MovementPace pace,
             boolean logisticsEligible,
             boolean combat,
             int decisionIntervalTicks,
             @Nullable java.util.function.Predicate<ItemStack> toolMatcher,
             java.util.function.Supplier<com.x4yi.automata.ai.IAutomatonJob> factory) {
         JOB_REGISTRY.register(JobDescriptor.builder(id, factory)
-                .movementMood(mood)
+                .movementPace(pace)
                 .logisticsEligible(logisticsEligible)
                 .combat(combat)
                 .decisionIntervalTicks(decisionIntervalTicks)

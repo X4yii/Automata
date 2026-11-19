@@ -7,9 +7,6 @@ import net.minecraftforge.fml.common.eventhandler.Event;
 
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Fired on {@code MinecraftForge.EVENT_BUS} before an automaton picks up a ground item.
- */
 @Cancelable
 public class BotPickupEvent extends Event {
 

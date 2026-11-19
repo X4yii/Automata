@@ -11,10 +11,6 @@ import javax.annotation.Nullable;
 
 import net.minecraft.util.ResourceLocation;
 
-/**
- * Thread-safe ordered registry of automaton jobs.
- * Preserves registration order for deterministic GUI listing and ordinal fallback.
- */
 public final class AutomatonJobRegistry {
 
     private final Map<ResourceLocation, JobDescriptor> byId = new LinkedHashMap<>();

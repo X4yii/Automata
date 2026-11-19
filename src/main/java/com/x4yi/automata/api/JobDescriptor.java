@@ -11,17 +11,14 @@ import net.minecraft.util.ResourceLocation;
 
 import com.x4yi.automata.ai.IAutomatonJob;
 import com.x4yi.automata.entity.EntityAutomaton;
-import com.x4yi.automata.movement.HumanMovementController.MovementMood;
+import com.x4yi.automata.movement.MovementPace;
 
-/**
- * Immutable metadata and factory descriptor for a registered automaton job.
- */
 public final class JobDescriptor {
 
     private final ResourceLocation id;
     private final String titleKey;
     private final String descriptionKey;
-    private final MovementMood movementMood;
+    private final MovementPace movementPace;
     private final boolean logisticsEligible;
     private final boolean combat;
     private final int decisionIntervalTicks;
@@ -35,7 +32,7 @@ public final class JobDescriptor {
         this.id = Objects.requireNonNull(builder.id, "id");
         this.titleKey = Objects.requireNonNull(builder.titleKey, "titleKey");
         this.descriptionKey = Objects.requireNonNull(builder.descriptionKey, "descriptionKey");
-        this.movementMood = Objects.requireNonNull(builder.movementMood, "movementMood");
+        this.movementPace = Objects.requireNonNull(builder.movementPace, "movementPace");
         this.logisticsEligible = builder.logisticsEligible;
         this.combat = builder.combat;
         this.decisionIntervalTicks = builder.decisionIntervalTicks;
@@ -56,8 +53,8 @@ public final class JobDescriptor {
         return descriptionKey;
     }
 
-    public MovementMood getMovementMood() {
-        return movementMood;
+    public MovementPace getMovementPace() {
+        return movementPace;
     }
 
     public boolean isLogisticsEligible() {
@@ -101,7 +98,7 @@ public final class JobDescriptor {
         private final Supplier<IAutomatonJob> factory;
         private String titleKey;
         private String descriptionKey;
-        private MovementMood movementMood = MovementMood.CHILL;
+        private MovementPace movementPace = MovementPace.NORMAL;
         private boolean logisticsEligible = true;
         private boolean combat = false;
         private int decisionIntervalTicks = 0;
@@ -127,8 +124,8 @@ public final class JobDescriptor {
             return this;
         }
 
-        public Builder movementMood(MovementMood movementMood) {
-            this.movementMood = movementMood;
+        public Builder movementPace(MovementPace movementPace) {
+            this.movementPace = movementPace;
             return this;
         }
 

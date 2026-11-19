@@ -8,9 +8,6 @@ import net.minecraftforge.fml.common.eventhandler.Event;
 
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Fired on {@code MinecraftForge.EVENT_BUS} before an automaton breaks a block.
- */
 @Cancelable
 public class BotBreakBlockEvent extends Event {
 

@@ -7,9 +7,6 @@ import net.minecraftforge.fml.common.eventhandler.Event;
 
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Fired on {@code MinecraftForge.EVENT_BUS} before an automaton attacks a target entity.
- */
 @Cancelable
 public class BotAttackEvent extends Event {
 
