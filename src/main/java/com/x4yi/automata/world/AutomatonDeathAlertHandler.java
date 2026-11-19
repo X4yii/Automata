@@ -13,9 +13,6 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import com.x4yi.automata.AutomataMod;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Privately whispers bot coordinates to any player who dies within a bot's 3x3 or loaded chunks.
- */
 @Mod.EventBusSubscriber(modid = AutomataMod.MOD_ID)
 public final class AutomatonDeathAlertHandler {
 
@@ -36,10 +33,15 @@ public final class AutomatonDeathAlertHandler {
             return;
         }
         BlockPos botPos = nearest.getPosition();
-        player.sendMessage(new TextComponentString(
-                TextFormatting.AQUA + "[Automata #" + nearest.getEntityId() + "] "
-                        + TextFormatting.GRAY + "Coords: "
-                        + TextFormatting.WHITE + botPos.getX() + ", " + botPos.getY() + ", " + botPos.getZ()));
+        player.sendMessage(new net.minecraft.util.text.TextComponentTranslation(
+                "message.automata.death_cover_coords",
+                TextFormatting.AQUA.toString(),
+                nearest.getEntityId(),
+                TextFormatting.GRAY.toString(),
+                TextFormatting.WHITE.toString(),
+                botPos.getX(),
+                botPos.getY(),
+                botPos.getZ()));
     }
 
     private static EntityAutomaton findNearestCoveringBot(World world, EntityPlayerMP player, ChunkPos deathChunk) {

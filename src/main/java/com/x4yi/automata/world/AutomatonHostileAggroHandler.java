@@ -16,9 +16,6 @@ import com.x4yi.automata.AutomataMod;
 import com.x4yi.automata.compat.SpartanWeaponryCompat;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Registers hostile mobs to target active automata just like vanilla players.
- */
 @Mod.EventBusSubscriber(modid = AutomataMod.MOD_ID)
 public final class AutomatonHostileAggroHandler {
 
@@ -46,8 +43,9 @@ public final class AutomatonHostileAggroHandler {
         }
         if (event.getTarget() instanceof EntityAutomaton bot && bot.isDowned()
                 && event.getEntityLiving() instanceof EntityLiving living) {
-            living.setAttackTarget(null);
-            living.setRevengeTarget(null);
+            if (living.getAttackTarget() != null) {
+                living.setAttackTarget(null);
+            }
         }
     }
 

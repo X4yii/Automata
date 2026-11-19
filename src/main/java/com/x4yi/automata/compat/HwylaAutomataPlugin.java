@@ -18,9 +18,6 @@ import net.minecraft.world.World;
 import javax.annotation.Nonnull;
 import java.util.List;
 
-/**
- * Optional HWYLA/Waila integration displaying automaton vitals, job status, and squad channel.
- */
 @WailaPlugin
 public class HwylaAutomataPlugin implements IWailaPlugin, IWailaEntityProvider {
 

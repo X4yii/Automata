@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
 
 package com.x4yi.automata.world;
 
@@ -16,9 +12,6 @@ import net.minecraftforge.common.util.FakePlayer;
 import com.x4yi.automata.ai.EquipmentSelector;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Tracks gradual 20 Hz block breaking progress and client break-crack stages per automaton.
- */
 public final class MiningProgressController {
 
     @Nullable

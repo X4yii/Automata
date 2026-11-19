@@ -104,7 +104,9 @@ public class EntityAutomaton extends EntityCreature {
     private boolean forceTerminating;
     private int hungerTickCounter;
     private int ticksSinceLastAttack = 20;
+    private int reviveGraceUntilTick = -1;
     private int eatingTicksRemaining;
+    private long activeThrownProjectileUntilTick;
     private ItemStack eatingItemStack = ItemStack.EMPTY;
     private ItemStack savedMainhandBeforeEat = ItemStack.EMPTY;
 
@@ -115,7 +117,8 @@ public class EntityAutomaton extends EntityCreature {
         this.moveHelper = new EntityMoveHelper(this) {
             @Override
             public void onUpdateMoveHelper() {
-                if (action == Action.WAIT && (movementController.hasActivePath() || movementController.isDirectControlActive())) {
+                if (movementController.hasActivePath() || movementController.isDirectControlActive()) {
+                    action = Action.WAIT;
                     return;
                 }
                 super.onUpdateMoveHelper();
@@ -230,7 +233,28 @@ public class EntityAutomaton extends EntityCreature {
         return false;
     }
 
+    private static final boolean AQUA_ACROBATICS_LOADED = resolveAquaAcrobaticsLoaded();
+
+    private static boolean resolveAquaAcrobaticsLoaded() {
+        try {
+            return net.minecraftforge.fml.common.Loader.isModLoaded("aquaacrobatics");
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    public static boolean isAquaAcrobaticsLoaded() {
+        return AQUA_ACROBATICS_LOADED;
+    }
+
     protected void updateSwimming() {
+        if (!AQUA_ACROBATICS_LOADED) {
+            if (isSwimming()) {
+                setSwimming(false);
+            }
+            updatePoseHitbox(isDowned());
+            return;
+        }
         boolean shouldSwim;
         boolean swimDesired = isSprinting() || hasUnderwaterObjective();
         if (isDowned() || isRiding()) {
@@ -304,7 +328,7 @@ public class EntityAutomaton extends EntityCreature {
         tasks.addTask(0, new EntityAISwimming(this) {
             @Override
             public boolean shouldExecute() {
-                if (getAir() >= 120 && (isSwimming() || hasUnderwaterObjective())) {
+                if (AQUA_ACROBATICS_LOADED && getAir() >= 120 && (isSwimming() || hasUnderwaterObjective())) {
                     return false;
                 }
                 if (brain != null && brain.getContext().getMiningController().isMining() && getAir() >= 60) {
@@ -315,7 +339,7 @@ public class EntityAutomaton extends EntityCreature {
 
             @Override
             public boolean shouldContinueExecuting() {
-                if (getAir() >= 120 && (isSwimming() || hasUnderwaterObjective())) {
+                if (AQUA_ACROBATICS_LOADED && getAir() >= 120 && (isSwimming() || hasUnderwaterObjective())) {
                     return false;
                 }
                 if (brain != null && brain.getContext().getMiningController().isMining() && getAir() >= 60) {
@@ -520,6 +544,16 @@ public class EntityAutomaton extends EntityCreature {
         return eatingTicksRemaining > 0 && !eatingItemStack.isEmpty();
     }
 
+    public void markThrownProjectileActive(long untilTick) {
+        if (untilTick > this.activeThrownProjectileUntilTick) {
+            this.activeThrownProjectileUntilTick = untilTick;
+        }
+    }
+
+    public boolean hasActiveThrownProjectile(long nowTick) {
+        return nowTick < this.activeThrownProjectileUntilTick;
+    }
+
     public float getHealthRatio() {
         return getHealth() / Math.max(1.0F, getMaxHealth());
     }
@@ -552,7 +586,11 @@ public class EntityAutomaton extends EntityCreature {
 
     @Override
     public void onLivingUpdate() {
-        updateArmSwingProgress();
+        long benchStart = (!world.isRemote && com.x4yi.automata.bench.InGameBenchmarkProfiler.isActive())
+                ? System.nanoTime()
+                : 0L;
+        try {
+            updateArmSwingProgress();
         prevSwimAnimation = swimAnimation;
         if (isDowned()) {
             motionX = 0.0D;
@@ -582,9 +620,8 @@ public class EntityAutomaton extends EntityCreature {
                                 world.getMinecraftServer())) {
                     pickupNearbyItems();
                 }
-                com.x4yi.automata.compat.SpartanWeaponryCompat.tickBoomerangReturn(this);
                 if (world instanceof WorldServer worldServer) {
-                    FakePlayerService.tickEquippedItemEffects(worldServer, this);
+                    com.x4yi.automata.compat.ModCompatBridge.tickEntityCompat(this, worldServer);
                 }
                 tickHungerAndHealing();
                 if (getOwnerUuid() != null) {
@@ -601,6 +638,13 @@ public class EntityAutomaton extends EntityCreature {
                     brain.getContext().getBlackboard().reportDowned(getEntityId(), getPosition(), world.getTotalWorldTime());
                 }
                 chunkLoader.releaseAll();
+            }
+        }
+        } finally {
+            if (benchStart != 0L) {
+                com.x4yi.automata.bench.InGameBenchmarkProfiler.record(
+                        com.x4yi.automata.bench.InGameBenchmarkProfiler.Phase.LIVING_UPDATE,
+                        System.nanoTime() - benchStart);
             }
         }
     }
@@ -620,6 +664,17 @@ public class EntityAutomaton extends EntityCreature {
             return myChannel != null && !myChannel.isEmpty() && myChannel.equals(otherChannel);
         }
         return false;
+    }
+
+    public boolean isInSameSquadWith(@Nullable EntityAutomaton other) {
+        if (!isAlliedWith(other)) {
+            return false;
+        }
+        String myChannel = taskConfig.getSquadChannel();
+        String otherChannel = other.taskConfig.getSquadChannel();
+        String normMine = myChannel == null ? "" : myChannel.trim();
+        String normOther = otherChannel == null ? "" : otherChannel.trim();
+        return normMine.equals(normOther);
     }
 
     @Override
@@ -724,7 +779,7 @@ public class EntityAutomaton extends EntityCreature {
         playSound(SoundEvents.ENTITY_PLAYER_BURP, 0.5F, 0.9F + rand.nextFloat() * 0.1F);
     }
 
-    private void cancelEating() {
+    public void cancelEating() {
         if (!isEating()) {
             return;
         }
@@ -823,8 +878,17 @@ public class EntityAutomaton extends EntityCreature {
                 && FakePlayerService.isAutomataFakePlayer(fake)) {
             return false;
         }
-        if (isDowned()) {
+        if (isDowned() || (!forceTerminating && ticksExisted < reviveGraceUntilTick)) {
             return false;
+        }
+        if (!world.isRemote
+                && world instanceof WorldServer ws
+                && com.x4yi.automata.compat.SrpCompat.isSrpLoaded()
+                && com.x4yi.automata.compat.SrpCompat.hasAnyAdaptiveArmor(this)) {
+            amount = FakePlayerService.processSrpArmorAdaptation(ws, this, source, amount);
+            if (amount <= 0.0F) {
+                return false;
+            }
         }
         if (!world.isRemote && getHealth() - amount <= 0.0F) {
             enterDownedState();
@@ -867,8 +931,12 @@ public class EntityAutomaton extends EntityCreature {
                 net.minecraft.entity.EntityLiving.class,
                 getEntityBoundingBox().grow(32.0D));
         for (net.minecraft.entity.EntityLiving mob : attackers) {
+            if (mob == this || mob instanceof EntityAutomaton) {
+                continue;
+            }
             if (mob.getAttackTarget() == this) {
                 mob.setAttackTarget(null);
+                mob.getNavigator().clearPath();
             }
             if (mob.getRevengeTarget() == this) {
                 mob.setRevengeTarget(null);
@@ -884,6 +952,8 @@ public class EntityAutomaton extends EntityCreature {
         updatePoseHitbox(false);
         float targetHealth = Math.max(2.0F, getMaxHealth() * Math.max(0.1F, Math.min(1.0F, healthFraction)));
         setHealth(targetHealth);
+        reviveGraceUntilTick = ticksExisted + 40;
+        hurtResistantTime = 40;
         if (!world.isRemote) {
             brain.getContext().getBlackboard().clearDowned(getEntityId());
         }
@@ -1103,9 +1173,12 @@ public class EntityAutomaton extends EntityCreature {
             return false;
         }
         ItemStack stack = itemEntity.getItem();
-        if (stack.isEmpty()) {
+        if (stack.isEmpty()
+                || com.x4yi.automata.compat.SpartanWeaponryCompat.isOwnedByOtherBot(this, itemEntity)
+                || !com.x4yi.automata.ai.SquadSupplyService.canBotPickupItem(this, itemEntity)) {
             return false;
         }
+        boolean giftForSelf = com.x4yi.automata.ai.SquadSupplyService.isGiftForBot(this, itemEntity);
         if (com.x4yi.automata.compat.SpartanWeaponryCompat.tryAbsorbPickedBoomerang(this, stack)) {
             itemEntity.setDead();
             playSound(SoundEvents.ENTITY_ITEM_PICKUP, 0.2F, ((rand.nextFloat() - rand.nextFloat()) * 0.7F + 1.0F) * 2.0F);
@@ -1132,6 +1205,9 @@ public class EntityAutomaton extends EntityCreature {
             itemEntity.setItem(remainder);
         }
         onItemPickup(itemEntity, pickedCount);
+        if (giftForSelf && com.x4yi.automata.ai.SquadSupplyService.scoreWeapon(stack) > 0.0D) {
+            com.x4yi.automata.ai.EquipmentSelector.equipBestWeapon(this);
+        }
         playSound(SoundEvents.ENTITY_ITEM_PICKUP, 0.2F, ((rand.nextFloat() - rand.nextFloat()) * 0.7F + 1.0F) * 2.0F);
         return true;
     }

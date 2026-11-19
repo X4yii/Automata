@@ -24,10 +24,6 @@ import net.minecraftforge.items.IItemHandlerModifiable;
 
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Dynamic, reflection-based integration with Spartan Weaponry (1.12.2) and
- * attribute-driven weapon inspection without hardcoded item tables.
- */
 public final class SpartanWeaponryCompat {
 
     public static final String MOD_ID = "spartanweaponry";
@@ -35,6 +31,12 @@ public final class SpartanWeaponryCompat {
     private static volatile boolean reflectionInitialized = false;
     @Nullable
     private static Class<?> throwingWeaponClass;
+    @Nullable
+    private static Class<?> caestusClass;
+    @Nullable
+    private static Class<?> weaponBaseClass;
+    @Nullable
+    private static Class<?> thrownWeaponEntityClass;
     @Nullable
     private static Class<?> boomerangClass;
     @Nullable
@@ -53,6 +55,16 @@ public final class SpartanWeaponryCompat {
     private static Method getPropertyMagnitudeMethod;
     @Nullable
     private static Method getMaxAmmoMethod;
+    @Nullable
+    private static Method crossbowGetReloadTicksMethod;
+    @Nullable
+    private static Method crossbowGetAimTicksMethod;
+    @Nullable
+    private static Method crossbowGetBoltSpeedMethod;
+    @Nullable
+    private static Method thrownWeaponGetStackMethod;
+
+    public static final String NBT_OWNER_BOT_UUID = "AutomataOwnerBot";
 
     private SpartanWeaponryCompat() {}
 
@@ -74,12 +86,23 @@ public final class SpartanWeaponryCompat {
             }
             if (isLoaded()) {
                 throwingWeaponClass = findClass("com.oblivioussp.spartanweaponry.item.ItemThrowingWeapon");
+                caestusClass = findClass("com.oblivioussp.spartanweaponry.item.ItemCaestus");
+                weaponBaseClass = findClass("com.oblivioussp.spartanweaponry.item.ItemWeaponBase");
                 if (throwingWeaponClass != null) {
                     getMaxAmmoMethod = findMethod(throwingWeaponClass, "getMaxAmmo", ItemStack.class);
+                }
+                thrownWeaponEntityClass = findClass("com.oblivioussp.spartanweaponry.entity.projectile.EntityThrownWeapon");
+                if (thrownWeaponEntityClass != null) {
+                    thrownWeaponGetStackMethod = findMethod(thrownWeaponEntityClass, "getWeaponStack");
                 }
                 boomerangClass = findClass("com.oblivioussp.spartanweaponry.item.ItemBoomerang");
                 boomerangEntityClass = findClass("com.oblivioussp.spartanweaponry.entity.projectile.EntityBoomerang");
                 crossbowClass = findClass("com.oblivioussp.spartanweaponry.item.ItemCrossbow");
+                if (crossbowClass != null) {
+                    crossbowGetReloadTicksMethod = findMethod(crossbowClass, "getReloadTicks", ItemStack.class);
+                    crossbowGetAimTicksMethod = findMethod(crossbowClass, "getAimTicks", ItemStack.class);
+                    crossbowGetBoltSpeedMethod = findMethod(crossbowClass, "getBoltSpeed");
+                }
                 boltClass = findClass("com.oblivioussp.spartanweaponry.item.ItemBolt");
                 propertyContainerClass = findClass("com.oblivioussp.spartanweaponry.api.IWeaponPropertyContainer");
                 if (propertyContainerClass != null) {
@@ -166,6 +189,47 @@ public final class SpartanWeaponryCompat {
         return key != null && key.getPath().toLowerCase(Locale.ROOT).contains("boomerang");
     }
 
+    public static boolean isCaestus(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+        ensureReflection();
+        Item item = stack.getItem();
+        if (caestusClass != null && caestusClass.isInstance(item)) {
+            return true;
+        }
+        ResourceLocation key = item.getRegistryName();
+        if (key == null) {
+            return false;
+        }
+        String path = key.getPath().toLowerCase(Locale.ROOT);
+        return path.contains("caestus") || path.contains("cestus");
+    }
+
+    public static boolean isQuickStrikeWeapon(ItemStack stack) {
+        return isCaestus(stack) || hasWeaponProperty(stack, "quick_strike");
+    }
+
+    public static boolean isSpartanMeleeWeapon(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+        ensureReflection();
+        Item item = stack.getItem();
+        if ((weaponBaseClass != null && weaponBaseClass.isInstance(item))
+                || (caestusClass != null && caestusClass.isInstance(item))) {
+            return true;
+        }
+        ResourceLocation key = item.getRegistryName();
+        return key != null
+                && MOD_ID.equals(key.getNamespace())
+                && !isCrossbow(stack)
+                && !isBoltItem(stack)
+                && !isBoomerang(stack)
+                && !isThrowableWeapon(stack)
+                && !(item instanceof ItemBow);
+    }
+
     public static int getMaxThrowingAmmo(ItemStack stack) {
         if (stack.isEmpty()) {
             return 0;
@@ -208,7 +272,7 @@ public final class SpartanWeaponryCompat {
         if (nbt == null) {
             return false;
         }
-        if (nbt.getBoolean("Loaded")) {
+        if (nbt.getBoolean("isLoaded") || nbt.getBoolean("Loaded")) {
             return true;
         }
         if (nbt.hasKey("ammoStack", 10)) {
@@ -216,6 +280,57 @@ public final class SpartanWeaponryCompat {
             return !loadedBolt.isEmpty();
         }
         return false;
+    }
+
+    public static int getCrossbowReloadTicks(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return 35;
+        }
+        ensureReflection();
+        if (crossbowGetReloadTicksMethod != null && crossbowClass != null && crossbowClass.isInstance(stack.getItem())) {
+            try {
+                Object res = crossbowGetReloadTicksMethod.invoke(stack.getItem(), stack);
+                if (res instanceof Number num && num.intValue() > 0) {
+                    return num.intValue();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return 35;
+    }
+
+    public static int getCrossbowAimTicks(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return 10;
+        }
+        ensureReflection();
+        if (crossbowGetAimTicksMethod != null && crossbowClass != null && crossbowClass.isInstance(stack.getItem())) {
+            try {
+                Object res = crossbowGetAimTicksMethod.invoke(stack.getItem(), stack);
+                if (res instanceof Number num && num.intValue() > 0) {
+                    return num.intValue();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return 10;
+    }
+
+    public static double getCrossbowBoltSpeed(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return 1.5D;
+        }
+        ensureReflection();
+        if (crossbowGetBoltSpeedMethod != null && crossbowClass != null && crossbowClass.isInstance(stack.getItem())) {
+            try {
+                Object res = crossbowGetBoltSpeedMethod.invoke(stack.getItem());
+                if (res instanceof Number num && num.doubleValue() > 0.1D) {
+                    return num.doubleValue();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return 1.5D;
     }
 
     public static double getReachBonus(ItemStack stack) {
@@ -238,7 +353,7 @@ public final class SpartanWeaponryCompat {
         if (propMagnitude > 0.0D) {
             return Math.max(0.0D, propMagnitude - 5.0D);
         }
-        return 0.0D;
+        return ModdedWeaponCompat.getExtraReachBonus(stack);
     }
 
     public static double getAttackSpeedModifier(ItemStack stack) {
@@ -256,7 +371,9 @@ public final class SpartanWeaponryCompat {
     }
 
     public static boolean isTwoHanded(ItemStack stack) {
-        return hasWeaponProperty(stack, "two_handed") || hasWeaponProperty(stack, "twohanded");
+        return hasWeaponProperty(stack, "two_handed")
+                || hasWeaponProperty(stack, "twohanded")
+                || ModdedWeaponCompat.isBetterSurvivalTwoHanded(stack);
     }
 
     public static boolean hasWeaponProperty(ItemStack stack, String propertyTypeSubstring) {
@@ -317,6 +434,188 @@ public final class SpartanWeaponryCompat {
         return entity.getClass().getSimpleName().toLowerCase(Locale.ROOT).contains("boomerang");
     }
 
+    public static boolean isThrownWeaponEntity(@Nullable Entity entity) {
+        if (entity == null) {
+            return false;
+        }
+        ensureReflection();
+        if (thrownWeaponEntityClass != null && thrownWeaponEntityClass.isInstance(entity)) {
+            return true;
+        }
+        String name = entity.getClass().getSimpleName().toLowerCase(Locale.ROOT);
+        return name.contains("thrownweapon") || name.contains("thrownjavelin");
+    }
+
+    public static void tagProjectileOwner(Entity projectile, EntityAutomaton owner) {
+        if (projectile == null || owner == null) {
+            return;
+        }
+        projectile.getEntityData().setUniqueId(NBT_OWNER_BOT_UUID, owner.getUniqueID());
+        if (owner.world != null && (isBoomerangEntity(projectile) || isThrownWeaponEntity(projectile))) {
+            owner.markThrownProjectileActive(owner.world.getTotalWorldTime() + 200L);
+        }
+    }
+
+    public static boolean isOwnedByBot(EntityAutomaton bot, @Nullable Entity entity) {
+        if (bot == null || entity == null) {
+            return false;
+        }
+        if (entity instanceof EntityArrow arrow && arrow.shootingEntity == bot) {
+            return true;
+        }
+        NBTTagCompound data = entity.getEntityData();
+        return data.hasUniqueId(NBT_OWNER_BOT_UUID) && bot.getUniqueID().equals(data.getUniqueId(NBT_OWNER_BOT_UUID));
+    }
+
+    public static boolean isOwnedByOtherBot(EntityAutomaton self, @Nullable Entity entity) {
+        if (self == null || entity == null) {
+            return false;
+        }
+        NBTTagCompound data = entity.getEntityData();
+        if (data.hasUniqueId(NBT_OWNER_BOT_UUID) && !self.getUniqueID().equals(data.getUniqueId(NBT_OWNER_BOT_UUID))) {
+            return true;
+        }
+        if (entity instanceof EntityArrow arrow && arrow.shootingEntity instanceof EntityAutomaton other && other != self) {
+            return true;
+        }
+        if (entity instanceof net.minecraft.entity.item.EntityItem itemEntity) {
+            ItemStack stack = itemEntity.getItem();
+            if (isThrowableWeapon(stack) && stack.hasTagCompound() && stack.getTagCompound().hasUniqueId("UUID")) {
+                java.util.UUID stackUuid = stack.getTagCompound().getUniqueId("UUID");
+                return !botInventoryContainsThrowingUuid(self, stackUuid);
+            }
+        }
+        return false;
+    }
+
+    private static boolean botInventoryContainsThrowingUuid(EntityAutomaton bot, java.util.UUID weaponUuid) {
+        if (matchesThrowingUuid(bot.getHeldItemMainhand(), weaponUuid)
+                || matchesThrowingUuid(bot.getHeldItemOffhand(), weaponUuid)) {
+            return true;
+        }
+        IItemHandlerModifiable inv = bot.getInventory().getCombinedInventory();
+        for (int i = 0; i < inv.getSlots(); i++) {
+            if (matchesThrowingUuid(inv.getStackInSlot(i), weaponUuid)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean matchesThrowingUuid(ItemStack stack, java.util.UUID weaponUuid) {
+        return !stack.isEmpty()
+                && stack.hasTagCompound()
+                && stack.getTagCompound().hasUniqueId("UUID")
+                && weaponUuid.equals(stack.getTagCompound().getUniqueId("UUID"));
+    }
+
+    @Nullable
+    public static EntityArrow findNearestOwnedDroppedThrowingWeapon(EntityAutomaton bot, double radius) {
+        if (!isLoaded() || bot.world == null) {
+            return null;
+        }
+        EntityArrow best = null;
+        double bestDistSq = radius * radius;
+        for (EntityArrow arrow : bot.world.getEntitiesWithinAABB(EntityArrow.class, bot.getEntityBoundingBox().grow(radius, 4.0D, radius))) {
+            if (!arrow.isEntityAlive() || !isOwnedByBot(bot, arrow)) {
+                continue;
+            }
+            boolean thrown = isThrownWeaponEntity(arrow);
+            boolean groundedBoomerang = isBoomerangEntity(arrow)
+                    && arrow.ticksExisted >= 20
+                    && (arrow.motionX * arrow.motionX + arrow.motionZ * arrow.motionZ) < 0.01D;
+            if ((!thrown && !groundedBoomerang) || arrow.ticksExisted < 8) {
+                continue;
+            }
+            double dSq = bot.getDistanceSq(arrow);
+            if (dSq < bestDistSq) {
+                bestDistSq = dSq;
+                best = arrow;
+            }
+        }
+        return best;
+    }
+
+    @Nullable
+    public static net.minecraft.util.math.BlockPos findNearestOwnedDroppedWeaponPos(EntityAutomaton bot, double radius) {
+        if (!isLoaded() || bot.world == null) {
+            return null;
+        }
+        double bestDistSq = radius * radius;
+        net.minecraft.util.math.BlockPos bestPos = null;
+        EntityArrow arrow = findNearestOwnedDroppedThrowingWeapon(bot, radius);
+        if (arrow != null) {
+            bestDistSq = bot.getDistanceSq(arrow);
+            bestPos = arrow.getPosition();
+        }
+        if (!hasDepletedThrowingOrBoomerang(bot)) {
+            return bestPos;
+        }
+        for (net.minecraft.entity.item.EntityItem itemEntity : bot.world.getEntitiesWithinAABB(
+                net.minecraft.entity.item.EntityItem.class,
+                bot.getEntityBoundingBox().grow(radius, 4.0D, radius))) {
+            if (!itemEntity.isEntityAlive() || itemEntity.cannotPickup() || isOwnedByOtherBot(bot, itemEntity)) {
+                continue;
+            }
+            ItemStack stack = itemEntity.getItem();
+            if (!isThrowableWeapon(stack) && !isBoomerang(stack)) {
+                continue;
+            }
+            double dSq = bot.getDistanceSq(itemEntity);
+            if (dSq < bestDistSq) {
+                bestDistSq = dSq;
+                bestPos = itemEntity.getPosition();
+            }
+        }
+        return bestPos;
+    }
+
+    private static boolean hasDepletedThrowingOrBoomerang(EntityAutomaton bot) {
+        ItemStack held = bot.getHeldItemMainhand();
+        if ((isThrowableWeapon(held) || isBoomerang(held))
+                && getRemainingThrowingAmmo(held) < getMaxThrowingAmmo(held)) {
+            return true;
+        }
+        IItemHandlerModifiable inv = bot.getInventory().getCombinedInventory();
+        for (int i = 0; i < inv.getSlots(); i++) {
+            ItemStack s = inv.getStackInSlot(i);
+            if ((isThrowableWeapon(s) || isBoomerang(s))
+                    && getRemainingThrowingAmmo(s) < getMaxThrowingAmmo(s)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static void tickThrownWeaponRecovery(EntityAutomaton bot) {
+        if (!isLoaded() || bot.world == null || bot.world.isRemote || !(bot.world instanceof net.minecraft.world.WorldServer worldServer)) {
+            return;
+        }
+        long now = bot.world.getTotalWorldTime();
+        if (!bot.hasActiveThrownProjectile(now) && !hasDepletedThrowingOrBoomerang(bot)) {
+            return;
+        }
+        for (EntityArrow arrow : bot.world.getEntitiesWithinAABB(EntityArrow.class, bot.getEntityBoundingBox().grow(4.0D, 2.5D, 4.0D))) {
+            if (!arrow.isEntityAlive() || !isOwnedByBot(bot, arrow) || arrow.ticksExisted < 8) {
+                continue;
+            }
+            if (isBoomerangEntity(arrow)) {
+                if (arrow.ticksExisted >= 20 && bot.getDistanceSq(arrow) <= 6.25D) {
+                    if (refillBoomerangPlaceholder(bot, null, 1)) {
+                        arrow.setDead();
+                    }
+                }
+                continue;
+            }
+            if (!isThrownWeaponEntity(arrow)) {
+                continue;
+            }
+            if (bot.getDistanceSq(arrow) <= 6.25D) {
+                com.x4yi.automata.world.FakePlayerService.pickupThrownProjectileAsFakePlayer(worldServer, bot, arrow);
+            }
+        }
+    }
+
     public static boolean hasBoomerangInFlight(EntityAutomaton bot) {
         if (!isLoaded() || bot.world == null) {
             return false;
@@ -331,6 +630,10 @@ public final class SpartanWeaponryCompat {
 
     public static void tickBoomerangReturn(EntityAutomaton bot) {
         if (!isLoaded() || bot.world == null || bot.world.isRemote) {
+            return;
+        }
+        long now = bot.world.getTotalWorldTime();
+        if (!bot.hasActiveThrownProjectile(now) && !hasDepletedThrowingOrBoomerang(bot)) {
             return;
         }
         for (EntityArrow arrow : bot.world.getEntitiesWithinAABB(EntityArrow.class, bot.getEntityBoundingBox().grow(48.0D))) {

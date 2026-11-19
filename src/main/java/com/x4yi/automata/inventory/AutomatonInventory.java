@@ -13,11 +13,17 @@ import net.minecraftforge.items.IItemHandlerModifiable;
 import net.minecraftforge.items.ItemStackHandler;
 import net.minecraftforge.items.wrapper.CombinedInvWrapper;
 
+import com.x4yi.automata.compat.UsefulBackpacksCompat;
+
 public class AutomatonInventory {
 
     public static final int MAIN_SLOTS = 27;
 
     private final ItemStackHandler mainInventory = new ItemStackHandler(MAIN_SLOTS);
+    @Nullable
+    private ItemStack cachedBackpackRef = ItemStack.EMPTY;
+    @Nullable
+    private UsefulBackpackItemHandler cachedBackpackHandler;
     private final ItemStackHandler backpackSlot = new ItemStackHandler(1) {
         @Override
         public boolean isItemValid(int slot, @Nonnull ItemStack stack) {
@@ -28,10 +34,20 @@ public class AutomatonInventory {
         public int getSlotLimit(int slot) {
             return 1;
         }
+
+        @Override
+        protected void onContentsChanged(int slot) {
+            invalidateBackpackCache();
+        }
     };
 
     public static boolean isBackpackItem(@Nonnull ItemStack stack) {
-        return !stack.isEmpty() && stack.hasCapability(CapabilityItemHandler.ITEM_HANDLER_CAPABILITY, null);
+        return UsefulBackpacksCompat.isUsefulBackpack(stack);
+    }
+
+    private void invalidateBackpackCache() {
+        cachedBackpackRef = ItemStack.EMPTY;
+        cachedBackpackHandler = null;
     }
 
     public ItemStackHandler getMainInventory() {
@@ -50,11 +66,16 @@ public class AutomatonInventory {
     @Nullable
     public IItemHandlerModifiable getBackpackHandler() {
         ItemStack backpack = getEquippedBackpack();
-        if (backpack.isEmpty()) {
+        if (backpack.isEmpty() || !UsefulBackpacksCompat.isUsefulBackpack(backpack)) {
+            invalidateBackpackCache();
             return null;
         }
-        IItemHandler handler = backpack.getCapability(CapabilityItemHandler.ITEM_HANDLER_CAPABILITY, null);
-        return handler instanceof IItemHandlerModifiable modifiable ? modifiable : null;
+        if (cachedBackpackHandler != null && cachedBackpackRef == backpack) {
+            return cachedBackpackHandler;
+        }
+        cachedBackpackRef = backpack;
+        cachedBackpackHandler = new UsefulBackpackItemHandler(backpack);
+        return cachedBackpackHandler;
     }
 
     public IItemHandlerModifiable getCombinedInventory() {
@@ -68,16 +89,43 @@ public class AutomatonInventory {
     @Nonnull
     public ItemStack consumeOneFood() {
         IItemHandlerModifiable combined = getCombinedInventory();
+        int bestSlot = -1;
+        float bestScore = Float.NEGATIVE_INFINITY;
         for (int i = 0; i < combined.getSlots(); i++) {
             ItemStack stack = combined.getStackInSlot(i);
-            if (!stack.isEmpty() && stack.getItem() instanceof ItemFood) {
-                ItemStack extracted = combined.extractItem(i, 1, false);
-                if (!extracted.isEmpty()) {
-                    return extracted;
-                }
+            if (stack.isEmpty() || !(stack.getItem() instanceof ItemFood)) {
+                continue;
+            }
+            float score = scoreFood(stack);
+            if (score > bestScore) {
+                bestScore = score;
+                bestSlot = i;
+            }
+        }
+        if (bestSlot >= 0) {
+            ItemStack extracted = combined.extractItem(bestSlot, 1, false);
+            if (!extracted.isEmpty()) {
+                return extracted;
             }
         }
         return ItemStack.EMPTY;
+    }
+
+    public static float scoreFood(ItemStack stack) {
+        if (stack.isEmpty() || !(stack.getItem() instanceof ItemFood food)) {
+            return Float.NEGATIVE_INFINITY;
+        }
+        int hunger = food.getHealAmount(stack);
+        float saturationRestored = hunger * food.getSaturationModifier(stack) * 2.0F;
+        float score = saturationRestored * 10.0F + hunger;
+        net.minecraft.item.Item item = stack.getItem();
+        if (item == net.minecraft.init.Items.ROTTEN_FLESH
+                || item == net.minecraft.init.Items.SPIDER_EYE
+                || item == net.minecraft.init.Items.POISONOUS_POTATO
+                || (item == net.minecraft.init.Items.FISH && stack.getMetadata() == 3)) {
+            score -= 1000.0F;
+        }
+        return score;
     }
 
     public NBTTagCompound serializeNBT() {
