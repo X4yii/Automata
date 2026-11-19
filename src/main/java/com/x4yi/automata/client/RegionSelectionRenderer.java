@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
 
 package com.x4yi.automata.client;
 
@@ -18,16 +14,18 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.AxisAlignedBB;
 import net.minecraft.util.math.BlockPos;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
+import net.minecraftforge.event.world.WorldEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
+import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 import net.minecraftforge.fml.relauncher.Side;
 
 import com.x4yi.automata.AutomataMod;
+import com.x4yi.automata.client.gui.AutomaStaffHudOverlay;
+import com.x4yi.automata.item.DevStaffMode;
+import com.x4yi.automata.item.ItemAutomaDevStaff;
 import com.x4yi.automata.item.ItemAutomaStaff;
 
-/**
- * Renders live A/B selection previews and a subtle outline of the configured automaton work zone.
- */
 @Mod.EventBusSubscriber(modid = AutomataMod.MOD_ID, value = Side.CLIENT)
 public final class RegionSelectionRenderer {
 
@@ -80,6 +78,20 @@ public final class RegionSelectionRenderer {
     }
 
     @SubscribeEvent
+    public static void onClientDisconnect(FMLNetworkEvent.ClientDisconnectionFromServerEvent event) {
+        clearAllZones();
+        RegionSelectionController.cancelSession();
+    }
+
+    @SubscribeEvent
+    public static void onWorldUnload(WorldEvent.Unload event) {
+        if (event.getWorld() != null && event.getWorld().isRemote) {
+            clearAllZones();
+            RegionSelectionController.cancelSession();
+        }
+    }
+
+    @SubscribeEvent
     public static void onRenderWorldLast(RenderWorldLastEvent event) {
         Minecraft mc = Minecraft.getMinecraft();
         EntityPlayer player = mc.player;
@@ -101,6 +113,18 @@ public final class RegionSelectionRenderer {
             return;
         }
 
+        if (!player.getHeldItemMainhand().isEmpty()
+                && player.getHeldItemMainhand().getItem() instanceof ItemAutomaDevStaff) {
+            DevStaffMode devMode = AutomaStaffHudOverlay.getActiveDevMode();
+            if (devMode == DevStaffMode.REVIVE_BOTS || devMode == DevStaffMode.HEAL_AND_FEED) {
+                BlockPos aim = ItemAutomaDevStaff.computeAimPoint(player, ItemAutomaDevStaff.DEV_RAYCAST_RANGE);
+                if (aim != null) {
+                    AxisAlignedBB aoe = ItemAutomaDevStaff.computeFiveByFiveAoe(aim);
+                    drawAabbOutline(camX, camY, camZ, aoe, 2.2F, 0.25F, 0.95F, 0.55F, 0.90F);
+                }
+            }
+        }
+
         ItemStack held = findLinkerStack(player);
         if (!held.isEmpty()) {
             BlockPos p1 = ItemAutomaStaff.getPos1(held);
@@ -109,6 +133,14 @@ public final class RegionSelectionRenderer {
                 BlockPos minPos = p1 != null ? p1 : p2;
                 BlockPos maxPos = p2 != null ? p2 : p1;
                 drawBox(camX, camY, camZ, minPos, maxPos, 2.2F, 1.0F, 0.85F, 0.1F, 0.85F);
+            }
+            BlockPos savingChest = ItemAutomaStaff.getSavingChestPos(held);
+            if (savingChest != null) {
+                drawBox(camX, camY, camZ, savingChest, savingChest, 2.6F, 0.20F, 0.90F, 0.45F, 0.92F);
+            }
+            BlockPos sourceChest = ItemAutomaStaff.getSourceChestPos(held);
+            if (sourceChest != null) {
+                drawBox(camX, camY, camZ, sourceChest, sourceChest, 2.6F, 0.25F, 0.65F, 1.0F, 0.92F);
             }
         }
 
@@ -126,6 +158,29 @@ public final class RegionSelectionRenderer {
                         isFocused ? 0.45F : 0.24F);
             }
         }
+    }
+
+    private static void drawAabbOutline(
+            double camX,
+            double camY,
+            double camZ,
+            AxisAlignedBB box,
+            float lineWidth,
+            float r,
+            float g,
+            float b,
+            float a) {
+        GlStateManager.pushMatrix();
+        GlStateManager.translate(-camX, -camY, -camZ);
+        GlStateManager.disableTexture2D();
+        GlStateManager.enableBlend();
+        GlStateManager.glLineWidth(lineWidth);
+
+        RenderGlobal.drawSelectionBoundingBox(box, r, g, b, a);
+
+        GlStateManager.disableBlend();
+        GlStateManager.enableTexture2D();
+        GlStateManager.popMatrix();
     }
 
     private static void drawBox(

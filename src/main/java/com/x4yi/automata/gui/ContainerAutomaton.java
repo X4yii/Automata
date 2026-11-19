@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
 
 package com.x4yi.automata.gui;
 
@@ -40,10 +36,6 @@ import com.x4yi.automata.ai.LogisticsService;
 import com.x4yi.automata.ai.TaskCompletionBehavior;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Server-authoritative inventory and telemetry container for {@link EntityAutomaton},
- * integrated with X4UI's {@link IServerActionHandler} and {@link NetworkSyncHelper}.
- */
 public class ContainerAutomaton extends Container implements IServerActionHandler {
 
     public static final int PROP_HEALTH_LOW = 0;
@@ -79,9 +71,11 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
 
     private static final int BOT_SLOT_COUNT = 34;
     private static final int TOTAL_SLOT_COUNT = 70;
+    public static final int BACKPACK_SLOT_START = TOTAL_SLOT_COUNT;
 
     private final EntityAutomaton bot;
     private final EntityPlayer player;
+    private final int maxBackpackSlots;
 
     public ContainerAutomaton(EntityAutomaton bot, EntityPlayer player) {
         this.bot = bot;
@@ -121,6 +115,108 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
         }
         for (int col = 0; col < 9; col++) {
             addSlotToContainer(new Slot(player.inventory, col, -9999, -9999));
+        }
+
+        this.maxBackpackSlots = Math.max(1, com.x4yi.automata.compat.UsefulBackpacksCompat.getMaxConfiguredBackpackSlots());
+        IItemHandlerModifiable activeBackpack = new ActiveBackpackSlotDelegate(bot);
+        for (int i = 0; i < maxBackpackSlots; i++) {
+            final int backpackIdx = i;
+            addSlotToContainer(new SlotItemHandler(activeBackpack, i, -9999, -9999) {
+                @Override
+                public boolean isItemValid(@Nonnull ItemStack stack) {
+                    IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+                    if (live == null || backpackIdx >= live.getSlots()) {
+                        return false;
+                    }
+                    if (stack == bot.getInventory().getEquippedBackpack()) {
+                        return false;
+                    }
+                    return live.isItemValid(backpackIdx, stack);
+                }
+
+                @Override
+                public boolean canTakeStack(EntityPlayer playerIn) {
+                    IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+                    return live != null && backpackIdx < live.getSlots() && super.canTakeStack(playerIn);
+                }
+
+                @Override
+                public void onSlotChanged() {
+                    super.onSlotChanged();
+                    IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+                    if (live instanceof com.x4yi.automata.inventory.UsefulBackpackItemHandler ubHandler) {
+                        ubHandler.writeToStack();
+                    }
+                }
+            });
+        }
+    }
+
+    public int getMaxBackpackSlots() {
+        return maxBackpackSlots;
+    }
+
+    private static final class ActiveBackpackSlotDelegate implements IItemHandlerModifiable {
+        private final EntityAutomaton bot;
+
+        ActiveBackpackSlotDelegate(EntityAutomaton bot) {
+            this.bot = bot;
+        }
+
+        @Override
+        public int getSlots() {
+            IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+            return live == null ? 0 : live.getSlots();
+        }
+
+        @Nonnull
+        @Override
+        public ItemStack getStackInSlot(int slot) {
+            IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+            if (live == null || slot < 0 || slot >= live.getSlots()) {
+                return ItemStack.EMPTY;
+            }
+            return live.getStackInSlot(slot);
+        }
+
+        @Override
+        public void setStackInSlot(int slot, @Nonnull ItemStack stack) {
+            IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+            if (live != null && slot >= 0 && slot < live.getSlots()) {
+                live.setStackInSlot(slot, stack);
+            }
+        }
+
+        @Nonnull
+        @Override
+        public ItemStack insertItem(int slot, @Nonnull ItemStack stack, boolean simulate) {
+            IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+            if (live == null || slot < 0 || slot >= live.getSlots()) {
+                return stack;
+            }
+            return live.insertItem(slot, stack, simulate);
+        }
+
+        @Nonnull
+        @Override
+        public ItemStack extractItem(int slot, int amount, boolean simulate) {
+            IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+            if (live == null || slot < 0 || slot >= live.getSlots()) {
+                return ItemStack.EMPTY;
+            }
+            return live.extractItem(slot, amount, simulate);
+        }
+
+        @Override
+        public int getSlotLimit(int slot) {
+            IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+            return live == null || slot < 0 || slot >= live.getSlots() ? 0 : live.getSlotLimit(slot);
+        }
+
+        @Override
+        public boolean isItemValid(int slot, @Nonnull ItemStack stack) {
+            IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+            return live != null && slot >= 0 && slot < live.getSlots() && live.isItemValid(slot, stack);
         }
     }
 
@@ -179,13 +275,23 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
         }
         ItemStack current = slot.getStack();
         ItemStack copy = current.copy();
-        if (index < BOT_SLOT_COUNT) {
+        if (index >= BACKPACK_SLOT_START) {
+            if (!mergeItemStack(current, BOT_SLOT_COUNT, TOTAL_SLOT_COUNT, true)) {
+                return ItemStack.EMPTY;
+            }
+        } else if (index < BOT_SLOT_COUNT) {
             if (!mergeItemStack(current, BOT_SLOT_COUNT, TOTAL_SLOT_COUNT, true)) {
                 return ItemStack.EMPTY;
             }
         } else {
-            if (!mergeItemStack(current, 7, BOT_SLOT_COUNT, false)
-                    && !mergeItemStack(current, 0, 7, false)) {
+            IItemHandlerModifiable live = bot.getInventory().getBackpackHandler();
+            int activeBpSlots = live == null ? 0 : Math.min(maxBackpackSlots, live.getSlots());
+            boolean merged = mergeItemStack(current, 7, BOT_SLOT_COUNT, false)
+                    || mergeItemStack(current, 0, 7, false);
+            if (!merged && activeBpSlots > 0) {
+                merged = mergeItemStack(current, BACKPACK_SLOT_START, BACKPACK_SLOT_START + activeBpSlots, false);
+            }
+            if (!merged) {
                 return ItemStack.EMPTY;
             }
         }
@@ -237,7 +343,13 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
                 break;
             case "automata:set_chest":
                 applyChestTarget(cfg, payload.getString("chest"), resolveTargetBlock(sender));
-                UINetwork.sendToast(sender, "Automata", "Chest updated: " + payload.getString("chest"), 1.8F);
+                UINetwork.sendToast(
+                        sender,
+                        "Automata",
+                        net.minecraft.util.text.translation.I18n.translateToLocalFormatted(
+                                "message.automata.toast.chest_updated",
+                                payload.getString("chest")),
+                        1.8F);
                 break;
             case "automata:clear_chest":
                 applyChestTarget(cfg, payload.getString("chest"), null);
@@ -267,14 +379,22 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
                 break;
             case "automata:clear_filters":
                 cfg.getEntityFilterIds().clear();
-                UINetwork.sendToast(sender, "Automata", "Entity filters cleared", 1.8F);
+                UINetwork.sendToast(
+                        sender,
+                        "Automata",
+                        net.minecraft.util.text.translation.I18n.translateToLocal("message.automata.toast.filters_cleared"),
+                        1.8F);
                 break;
             case "automata:toggle_squad":
                 cfg.setSquadCooperation(!cfg.isSquadCooperation());
                 break;
             case "automata:set_squad_channel":
                 cfg.setSquadChannel(payload.getString("channel"));
-                UINetwork.sendToast(sender, "Automata", "Squad channel updated", 1.8F);
+                UINetwork.sendToast(
+                        sender,
+                        "Automata",
+                        net.minecraft.util.text.translation.I18n.translateToLocal("message.automata.toast.squad_updated"),
+                        1.8F);
                 break;
             case "automata:toggle_terrain":
                 cfg.setAllowBreakThrough(!cfg.isAllowBreakThrough());
@@ -290,7 +410,11 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
                 break;
             case "automata:set_skin":
                 bot.setSkinName(payload.getString("skin"));
-                UINetwork.sendToast(sender, "Automata", "Skin updated", 1.8F);
+                UINetwork.sendToast(
+                        sender,
+                        "Automata",
+                        net.minecraft.util.text.translation.I18n.translateToLocal("message.automata.toast.skin_updated"),
+                        1.8F);
                 break;
             case "automata:set_name":
                 bot.setAutomatonName(payload.getString("name"));
@@ -298,7 +422,11 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
                 UINetwork.sendToast(
                         sender,
                         "Automata",
-                        updatedName.isEmpty() ? "Name cleared" : "Name: " + updatedName,
+                        updatedName.isEmpty()
+                                ? net.minecraft.util.text.translation.I18n.translateToLocal("message.automata.toast.name_cleared")
+                                : net.minecraft.util.text.translation.I18n.translateToLocalFormatted(
+                                        "message.automata.toast.name_updated",
+                                        updatedName),
                         1.8F);
                 break;
             case "automata:toggle_slim":
@@ -311,7 +439,13 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
                 TaskCompletionBehavior[] behaviors = TaskCompletionBehavior.values();
                 int nextIdx = (cfg.getCompletionBehavior().ordinal() + 1) % behaviors.length;
                 cfg.setCompletionBehavior(behaviors[nextIdx]);
-                UINetwork.sendToast(sender, "Automata", "On Finish: " + behaviors[nextIdx].getDisplayName(), 1.8F);
+                UINetwork.sendToast(
+                        sender,
+                        "Automata",
+                        net.minecraft.util.text.translation.I18n.translateToLocalFormatted(
+                                "message.automata.toast.on_finish",
+                                behaviors[nextIdx].getDisplayName()),
+                        1.8F);
                 break;
             case "automata:backpack_extract":
                 IItemHandlerModifiable bp = bot.getInventory().getBackpackHandler();
@@ -346,13 +480,8 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
                 cfg.setSourceChest(pos);
                 break;
             case "deposit":
-                cfg.setDepositChest(pos);
-                break;
-            case "tool":
-                cfg.setToolChest(pos);
-                break;
-            case "food":
-                cfg.setFoodChest(pos);
+            case "saving":
+                cfg.setSavingChest(pos);
                 break;
             default:
                 break;

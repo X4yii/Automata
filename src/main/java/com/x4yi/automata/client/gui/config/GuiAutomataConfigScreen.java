@@ -1,6 +1,5 @@
 package com.x4yi.automata.client.gui.config;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -11,35 +10,30 @@ import com.x4yi.x4ui.client.gui.component.GuiButton;
 import com.x4yi.x4ui.client.gui.component.GuiComponent;
 import com.x4yi.x4ui.client.gui.component.GuiDropdown;
 import com.x4yi.x4ui.client.gui.component.GuiLabel;
+import com.x4yi.x4ui.client.gui.component.GuiMarkdown;
 import com.x4yi.x4ui.client.gui.component.GuiPanel;
 import com.x4yi.x4ui.client.gui.component.GuiScrollPanel;
 import com.x4yi.x4ui.client.gui.component.GuiTextInput;
 import com.x4yi.x4ui.client.gui.component.GuiToggle;
 import com.x4yi.x4ui.client.gui.component.layout.FlexAlign;
 import com.x4yi.x4ui.client.gui.component.layout.FlexDirection;
-import com.x4yi.x4ui.client.gui.component.slider.GuiSlider;
 import com.x4yi.x4ui.client.gui.component.slider.GuiSliderDouble;
+import com.x4yi.x4ui.client.gui.component.slider.GuiSliderInt;
 import com.x4yi.x4ui.client.gui.utils.Insets;
 import com.x4yi.x4ui.common.State;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.ScaledResolution;
-import net.minecraft.util.math.MathHelper;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.client.config.ConfigGuiType;
 import net.minecraftforge.fml.client.config.IConfigElement;
 import net.minecraftforge.fml.client.event.ConfigChangedEvent;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
-import org.lwjgl.opengl.GL11;
 
 import com.x4yi.automata.AutomataMod;
 import com.x4yi.automata.client.gui.AutomataUiTheme;
 
-/**
- * Responsive Master-Detail X4UI configuration screen backed natively by Forge {@link IConfigElement}.
- */
 @SideOnly(Side.CLIENT)
 public class GuiAutomataConfigScreen extends GuiBaseScreen {
 
@@ -52,8 +46,6 @@ public class GuiAutomataConfigScreen extends GuiBaseScreen {
     private GuiScrollPanel masterScroll;
     private GuiPanel masterList;
     private GuiPanel detailPanel;
-    private int winW;
-    private int winH;
 
     public GuiAutomataConfigScreen(GuiScreen parentScreen) {
         super(parentScreen, "Automata Config");
@@ -62,127 +54,94 @@ public class GuiAutomataConfigScreen extends GuiBaseScreen {
         setDimBackground(true);
     }
 
-    private void computeWindowDimensions() {
-        this.winW = Math.min(AutomataUiTheme.MAX_WINDOW_W, Math.max(AutomataUiTheme.MIN_WINDOW_W, (int) (this.width * 0.90F)));
-        this.winH = Math.min(AutomataUiTheme.MAX_WINDOW_H, Math.max(AutomataUiTheme.MIN_WINDOW_H, (int) (this.height * 0.90F)));
-    }
-
     @Override
     protected void initComponents() {
-        computeWindowDimensions();
-        int left = (this.width - winW) / 2;
-        int top = (this.height - winH) / 2;
+        window = createCenteredWindow(AutomataUiTheme.MAX_WINDOW_W, AutomataUiTheme.MAX_WINDOW_H)
+                .withFlexDirection(FlexDirection.VERTICAL)
+                .withAlignItems(FlexAlign.STRETCH)
+                .withGap(6)
+                .withPadding(8)
+                .withBackgroundColor(AutomataUiTheme.COLOR_BG)
+                .withBorder(1, AutomataUiTheme.COLOR_BORDER)
+                .withCornerRadius(6);
 
-        window = new GuiPanel(left, top, winW, winH);
-        window.setFlexDirection(FlexDirection.VERTICAL);
-        window.setGap(6);
-        window.setPadding(new Insets(8));
-        window.setBackgroundColor(AutomataUiTheme.COLOR_BG);
-        window.setBorderColor(AutomataUiTheme.COLOR_BORDER);
-        window.setBorderWidth(1);
-        window.setCornerRadius(6);
+        window.add(buildHeaderBar());
 
-        window.addChild(buildHeaderBar());
+        bodyRow = window.add(GuiPanel.row(8)
+                .withHugContent(false)
+                .withPercentWidth(-1.0F)
+                .withAlignItems(FlexAlign.STRETCH));
+        bodyRow.withFlex(1.0F, 1.0F).withMinHeight(110);
 
-        bodyRow = GuiPanel.row(8);
-        bodyRow.setHugContent(false);
-        bodyRow.withPercentWidth(1.0F);
-        bodyRow.setHeight(Math.max(110, winH - 74));
-        bodyRow.setAlignItems(FlexAlign.STRETCH);
+        GuiPanel masterFrame = bodyRow.add(GuiPanel.column(4)
+                .withPercentWidth(0.38F)
+                .withHugContent(false)
+                .withPadding(4)
+                .withBackgroundColor(AutomataUiTheme.COLOR_SURFACE)
+                .withBorder(1, AutomataUiTheme.COLOR_BORDER)
+                .withCornerRadius(4));
 
-        // Left: Master list (38% relative width)
-        GuiPanel masterFrame = GuiPanel.column(4);
-        masterFrame.withPercentSize(0.38F, 1.0F);
-        masterFrame.setHugContent(false);
-        masterFrame.setPadding(new Insets(4));
-        masterFrame.setBackgroundColor(AutomataUiTheme.COLOR_SURFACE);
-        masterFrame.setBorderColor(AutomataUiTheme.COLOR_BORDER);
-        masterFrame.setBorderWidth(1);
-        masterFrame.setCornerRadius(4);
+        masterScroll = masterFrame.add(AutomataUiTheme.createTabScroll());
+        masterList = masterScroll.add(GuiPanel.column(3).withHugContent(true).withPercentWidth(1.0F));
 
-        masterScroll = AutomataUiTheme.createTabScroll();
-        masterList = GuiPanel.column(3).withHugContent(true);
-        masterList.withPercentWidth(1.0F);
-        masterScroll.addChild(masterList);
-        masterFrame.addChild(masterScroll);
-        bodyRow.addChild(masterFrame);
+        detailPanel = bodyRow.add(GuiPanel.column(6)
+                .withHugContent(false)
+                .withPercentWidth(-1.0F)
+                .withAlignItems(FlexAlign.STRETCH)
+                .withPadding(8)
+                .withBackgroundColor(AutomataUiTheme.COLOR_CARD)
+                .withBorder(1, AutomataUiTheme.COLOR_BORDER)
+                .withCornerRadius(4));
+        detailPanel.withFlex(1.0F, 1.0F);
 
-        // Right: Detail inspector (62% relative width)
-        detailPanel = GuiPanel.column(6);
-        detailPanel.withPercentSize(0.62F, 1.0F);
-        detailPanel.setHugContent(false);
-        detailPanel.setPadding(new Insets(8));
-        detailPanel.setBackgroundColor(AutomataUiTheme.COLOR_CARD);
-        detailPanel.setBorderColor(AutomataUiTheme.COLOR_BORDER);
-        detailPanel.setBorderWidth(1);
-        detailPanel.setCornerRadius(4);
-        bodyRow.addChild(detailPanel);
-
-        window.addChild(bodyRow);
-        window.addChild(buildFooterBar());
-
-        addComponent(window);
+        window.add(buildFooterBar());
 
         rebuildMasterList();
         rebuildDetailPanel();
     }
 
-    @Override
-    protected void onScreenResize(int newWidth, int newHeight) {
-        computeWindowDimensions();
-        if (window != null) {
-            window.setX((newWidth - winW) / 2);
-            window.setY((newHeight - winH) / 2);
-            window.setWidth(winW);
-            window.setHeight(winH);
-            if (bodyRow != null) {
-                bodyRow.setHeight(Math.max(110, winH - 74));
-            }
-            window.requestLayout();
-            rebuildMasterList();
-            rebuildDetailPanel();
-        }
-    }
-
     private GuiPanel buildHeaderBar() {
-        GuiPanel header = GuiPanel.row(8);
-        header.setHugContent(false);
-        header.withPercentWidth(1.0F);
-        header.setHeight(24);
-        header.setPadding(new Insets(0, 6, 0, 6));
-        header.setBackgroundColor(AutomataUiTheme.COLOR_SURFACE);
-        header.setBorderColor(AutomataUiTheme.COLOR_BORDER);
-        header.setBorderWidth(1);
-        header.setCornerRadius(4);
-        header.setAlignItems(FlexAlign.CENTER);
+        GuiPanel header = GuiPanel.row(8)
+                .withHugContent(false)
+                .withPercentWidth(1.0F)
+                .withPadding(new Insets(0, 6, 0, 6))
+                .withBackgroundColor(AutomataUiTheme.COLOR_SURFACE)
+                .withBorder(1, AutomataUiTheme.COLOR_BORDER)
+                .withCornerRadius(4)
+                .withAlignItems(FlexAlign.CENTER);
+        header.withSize(0, 24);
 
-        header.addChild(new GuiLabel(0, 0, tr("gui.automata.config.title", "AUTOMATA CONFIG"), AutomataUiTheme.COLOR_TEXT));
-        header.addChild(GuiPanel.spacer());
+        header.add(GuiLabel.of(tr("gui.automata.config.title", "AUTOMATA CONFIG"), AutomataUiTheme.COLOR_TEXT));
+        header.add(GuiPanel.spacer());
 
-        GuiTextInput searchInput = new GuiTextInput(0, 0, 120, 16, searchQuery);
-        searchInput.withPercentWidth(0.38F);
-        searchInput.setOnTextChanged(q -> rebuildMasterList());
-        header.addChild(searchInput);
+        header.add(GuiTextInput.of(searchQuery), input -> {
+            input.withSize(120, 16).withPercentWidth(0.38F);
+            input.setPlaceholder(tr("gui.automata.config.search", "Search..."));
+            input.setOnTextChanged(q -> rebuildMasterList());
+        });
         return header;
     }
 
     private GuiPanel buildFooterBar() {
-        GuiPanel footer = GuiPanel.row(6);
-        footer.setHugContent(false);
-        footer.withPercentWidth(1.0F);
-        footer.setHeight(22);
-        footer.setAlignItems(FlexAlign.CENTER);
+        GuiPanel footer = GuiPanel.row(6)
+                .withHugContent(false)
+                .withPercentWidth(1.0F)
+                .withAlignItems(FlexAlign.CENTER);
+        footer.withSize(0, 22);
 
-        footer.addChild(new GuiButton(0, 0, 70, 18, tr("gui.automata.config.reset_all", "Reset All"), () -> {
+        footer.add(GuiButton.of(tr("gui.automata.config.reset_all", "Reset All"), () -> {
             for (ConfigEntryModel entry : entries) {
                 entry.resetToDefault();
             }
             rebuildMasterList();
             rebuildDetailPanel();
-        }));
-        footer.addChild(GuiPanel.spacer());
-        footer.addChild(new GuiButton(0, 0, 64, 18, tr("gui.automata.config.cancel", "Cancel"), this::closeScreen));
-        footer.addChild(new GuiButton(0, 0, 82, 18, tr("gui.automata.config.save_done", "Save & Done"), this::saveAndClose));
+        }), btn -> btn.withSize(70, 18));
+        footer.add(GuiPanel.spacer());
+        footer.add(GuiButton.of(tr("gui.automata.config.cancel", "Cancel"), this::closeScreen),
+                btn -> btn.withSize(64, 18));
+        footer.add(GuiButton.of(tr("gui.automata.config.save_done", "Save & Done"), this::saveAndClose)
+                .withVariant(GuiButton.Variant.PRIMARY),
+                btn -> btn.withSize(82, 18));
         return footer;
     }
 
@@ -192,7 +151,8 @@ public class GuiAutomataConfigScreen extends GuiBaseScreen {
         }
         masterList.clearChildren();
         String query = searchQuery.get();
-        int approxColPx = Math.max(80, Math.round(winW * 0.38F) - 24);
+        int currentWinW = window != null && window.getWidth() > 0 ? window.getWidth() : AutomataUiTheme.MAX_WINDOW_W;
+        int approxColPx = Math.max(80, Math.round(currentWinW * 0.38F) - 24);
         ConfigEntryModel firstVisible = null;
         boolean selectedVisible = false;
 
@@ -214,13 +174,11 @@ public class GuiAutomataConfigScreen extends GuiBaseScreen {
             int borderColor = isSelected ? AutomataUiTheme.COLOR_ACCENT : AutomataUiTheme.COLOR_BORDER;
             int bgColor = isSelected ? AutomataUiTheme.COLOR_CARD : AutomataUiTheme.COLOR_TRACK;
 
-            MarqueeButton rowBtn = new MarqueeButton(approxColPx, 18, prefix + entry.getName(), textColor, bgColor, borderColor, () -> {
+            masterList.add(new MarqueeButton(approxColPx, 18, prefix + entry.getName(), textColor, bgColor, borderColor, () -> {
                 selectedEntry = entry;
                 rebuildMasterList();
                 rebuildDetailPanel();
-            });
-            rowBtn.withPercentWidth(1.0F);
-            masterList.addChild(rowBtn);
+            }), btn -> btn.withPercentWidth(1.0F));
         }
         if (!selectedVisible && firstVisible != null) {
             selectedEntry = firstVisible;
@@ -235,70 +193,57 @@ public class GuiAutomataConfigScreen extends GuiBaseScreen {
         }
         detailPanel.clearChildren();
         if (selectedEntry == null) {
-            detailPanel.addChild(new GuiLabel(0, 0, tr("gui.automata.config.none_selected", "No option selected."), AutomataUiTheme.COLOR_MUTED));
+            detailPanel.add(GuiLabel.of(tr("gui.automata.config.none_selected", "No option selected."), AutomataUiTheme.COLOR_MUTED));
             detailPanel.requestLayout();
             return;
         }
 
-        int approxDetailPx = Math.max(120, Math.round(winW * 0.62F) - 34);
+        int currentWinW = window != null && window.getWidth() > 0 ? window.getWidth() : AutomataUiTheme.MAX_WINDOW_W;
+        int approxDetailPx = Math.max(120, Math.round(currentWinW * 0.62F) - 34);
         ConfigEntryModel entry = selectedEntry;
 
-        // Title + Reset row
-        GuiPanel titleRow = GuiPanel.row(6);
-        titleRow.setHugContent(false);
-        titleRow.withPercentWidth(1.0F);
-        titleRow.setHeight(20);
-        titleRow.setAlignItems(FlexAlign.CENTER);
-        MarqueeLabel titleLabel = new MarqueeLabel(Math.max(60, approxDetailPx - 52), 14, entry.getName(), AutomataUiTheme.COLOR_TEXT);
-        titleLabel.withPercentWidth(0.76F);
-        titleRow.addChild(titleLabel);
-        titleRow.addChild(GuiPanel.spacer());
-        titleRow.addChild(new GuiButton(0, 0, 44, 16, tr("gui.automata.config.reset", "Reset"), () -> {
+        GuiPanel titleRow = detailPanel.add(GuiPanel.row(6)
+                .withHugContent(false)
+                .withPercentWidth(1.0F)
+                .withAlignItems(FlexAlign.CENTER));
+        titleRow.withSize(0, 20);
+        titleRow.add(new MarqueeLabel(0, 14, entry.getName(), AutomataUiTheme.COLOR_TEXT),
+                lbl -> lbl.withFlex(1.0F, 1.0F).withMinWidth(40));
+        titleRow.add(GuiButton.of(tr("gui.automata.config.reset", "Reset"), () -> {
             entry.resetToDefault();
             rebuildMasterList();
             rebuildDetailPanel();
-        }));
-        detailPanel.addChild(titleRow);
+        }), btn -> btn.withSize(44, 16));
 
-        // Status badge
-        GuiLabel statusLabel = new GuiLabel(
-                0, 0,
+        GuiLabel statusLabel = detailPanel.add(GuiLabel.of(
                 entry.getCategory() + "  •  " + (entry.isDefaultValue()
                         ? tr("gui.automata.config.default", "Default")
                         : tr("gui.automata.config.modified", "Modified")),
-                entry.isDefaultValue() ? AutomataUiTheme.COLOR_MUTED : AutomataUiTheme.COLOR_AMBER);
-        statusLabel.withPercentWidth(1.0F);
-        detailPanel.addChild(statusLabel);
+                entry.isDefaultValue() ? AutomataUiTheme.COLOR_MUTED : AutomataUiTheme.COLOR_AMBER),
+                lbl -> lbl.withPercentWidth(1.0F));
 
-        // Editor control box
-        GuiPanel controlBox = entry.isList() ? GuiPanel.column(4) : GuiPanel.row(8);
-        controlBox.setHugContent(false);
-        controlBox.withPercentWidth(1.0F);
-        controlBox.setHeight(entry.isList() ? 104 : 30);
-        controlBox.setAlignItems(entry.isList() ? FlexAlign.START : FlexAlign.CENTER);
-        controlBox.setPadding(new Insets(6));
-        controlBox.setBackgroundColor(AutomataUiTheme.COLOR_SURFACE);
-        controlBox.setBorderColor(AutomataUiTheme.COLOR_BORDER);
-        controlBox.setBorderWidth(1);
-        controlBox.setCornerRadius(4);
+        GuiPanel controlBox = detailPanel.add((entry.isList() ? GuiPanel.column(4) : GuiPanel.row(8))
+                .withHugContent(false)
+                .withPercentWidth(1.0F)
+                .withAlignItems(entry.isList() ? FlexAlign.STRETCH : FlexAlign.CENTER)
+                .withPadding(6)
+                .withBackgroundColor(AutomataUiTheme.COLOR_SURFACE)
+                .withBorder(1, AutomataUiTheme.COLOR_BORDER)
+                .withCornerRadius(4));
+        controlBox.withSize(0, entry.isList() ? 104 : 30);
 
         if (entry.isList()) {
-            addListEditor(controlBox, entry, approxDetailPx - 14);
+            addListEditor(controlBox, entry);
         } else {
             addScalarControl(controlBox, entry, statusLabel);
         }
-        detailPanel.addChild(controlBox);
 
-        // Wrapped full comment
         String comment = entry.getComment();
-        if (!comment.isEmpty() && this.mc != null && this.mc.fontRenderer != null) {
-            List<String> lines = this.mc.fontRenderer.listFormattedStringToWidth(comment, approxDetailPx);
-            int maxLines = Math.min(lines.size(), 6);
-            for (int i = 0; i < maxLines; i++) {
-                GuiLabel line = new GuiLabel(0, 0, lines.get(i), AutomataUiTheme.COLOR_MUTED);
-                line.withPercentWidth(1.0F);
-                detailPanel.addChild(line);
-            }
+        if (!comment.isEmpty()) {
+            GuiScrollPanel commentScroll = detailPanel.add(GuiScrollPanel.vertical(40, 0));
+            commentScroll.withPercentWidth(-1.0F).withFlex(1.0F, 1.0F).withMinHeight(24);
+            commentScroll.add(new GuiMarkdown(0, 0, approxDetailPx, comment),
+                    md -> md.withPercentWidth(1.0F));
         }
 
         detailPanel.requestLayout();
@@ -322,86 +267,82 @@ public class GuiAutomataConfigScreen extends GuiBaseScreen {
         ConfigGuiType type = entry.getType();
         if (type == ConfigGuiType.BOOLEAN) {
             State<Boolean> state = new State<>((Boolean) entry.getDraftValue());
-            state.addListener(val -> {
+            row.add(GuiLabel.of(tr("gui.automata.config.enabled", "Enabled:"), AutomataUiTheme.COLOR_MUTED));
+            row.add(GuiPanel.spacer());
+            GuiToggle toggle = row.add(new GuiToggle(0, 0, 52, 18, "", state));
+            toggle.bindState(state, val -> {
                 entry.setDraftValue(val);
                 updateStatusLabel(statusLabel, entry);
             });
-            row.addChild(new GuiLabel(0, 0, tr("gui.automata.config.enabled", "Enabled:"), AutomataUiTheme.COLOR_MUTED));
-            row.addChild(GuiPanel.spacer());
-            row.addChild(new GuiToggle(0, 0, 52, 18, "", state));
             return;
         }
         if (type == ConfigGuiType.INTEGER) {
             int min = element.getMinValue() != null ? Integer.parseInt(element.getMinValue().toString()) : 0;
             int max = element.getMaxValue() != null ? Integer.parseInt(element.getMaxValue().toString()) : 2000;
             State<Integer> state = new State<>((Integer) entry.getDraftValue());
-            GuiLabel valLabel = new GuiLabel(0, 0, String.valueOf(state.get()), AutomataUiTheme.COLOR_ACCENT);
-            state.addListener(val -> {
-                entry.setDraftValue(val);
-                valLabel.setText(String.valueOf(val));
-                updateStatusLabel(statusLabel, entry);
+            GuiLabel valLabel = GuiLabel.of(String.valueOf(state.get()), AutomataUiTheme.COLOR_ACCENT);
+            GuiSliderInt slider = row.add(GuiSliderInt.of(state, min, max, 1),
+                    s -> s.withPercentWidth(-1.0F).withSize(0, 16).withFlex(1.0F, 1.0F).withMinWidth(40));
+            slider.bindState(state, val -> {
+                if (val != null) {
+                    entry.setDraftValue(val);
+                    valLabel.setText(String.valueOf(val));
+                    updateStatusLabel(statusLabel, entry);
+                }
             });
-            GuiIntSlider slider = new GuiIntSlider(0, 0, 120, 16, state, min, max);
-            slider.withPercentWidth(0.75F);
-            row.addChild(slider);
-            row.addChild(GuiPanel.spacer());
-            row.addChild(valLabel);
+            row.add(valLabel);
             return;
         }
         if (type == ConfigGuiType.DOUBLE) {
             double min = element.getMinValue() != null ? Double.parseDouble(element.getMinValue().toString()) : 0.0D;
             double max = element.getMaxValue() != null ? Double.parseDouble(element.getMaxValue().toString()) : 2.0D;
             State<Double> state = new State<>((Double) entry.getDraftValue());
-            GuiLabel valLabel = new GuiLabel(0, 0, String.format(Locale.ROOT, "%.2f", state.get()), AutomataUiTheme.COLOR_ACCENT);
-            state.addListener(val -> {
-                entry.setDraftValue(val);
-                valLabel.setText(String.format(Locale.ROOT, "%.2f", val));
-                updateStatusLabel(statusLabel, entry);
+            GuiLabel valLabel = GuiLabel.of(String.format(Locale.ROOT, "%.2f", state.get()), AutomataUiTheme.COLOR_ACCENT);
+            GuiSliderDouble slider = row.add(GuiSliderDouble.of(state, min, max, 0.01D),
+                    s -> s.withPercentWidth(-1.0F).withSize(0, 16).withFlex(1.0F, 1.0F).withMinWidth(40));
+            slider.bindState(state, val -> {
+                if (val != null) {
+                    entry.setDraftValue(val);
+                    valLabel.setText(String.format(Locale.ROOT, "%.2f", val));
+                    updateStatusLabel(statusLabel, entry);
+                }
             });
-            GuiSliderDouble slider = new GuiSliderDouble(0, 0, 120, 16, state, min, max, 0.01D);
-            slider.withPercentWidth(0.75F);
-            row.addChild(slider);
-            row.addChild(GuiPanel.spacer());
-            row.addChild(valLabel);
+            row.add(valLabel);
             return;
         }
         String[] valid = element.getValidValues();
         if (valid != null && valid.length > 0) {
             State<String> state = new State<>(String.valueOf(entry.getDraftValue()));
-            state.addListener(val -> {
+            GuiDropdown<String> dropdown = row.add(GuiDropdown.of(state, Arrays.asList(valid)),
+                    dd -> dd.withSize(140, 18).withPercentWidth(1.0F));
+            dropdown.bindState(state, val -> {
                 entry.setDraftValue(val);
                 updateStatusLabel(statusLabel, entry);
             });
-            GuiDropdown<String> dropdown = new GuiDropdown<>(0, 0, 140, 18, state, Arrays.asList(valid));
-            dropdown.withPercentWidth(1.0F);
-            row.addChild(dropdown);
             return;
         }
         State<String> state = new State<>(String.valueOf(entry.getDraftValue()));
-        GuiTextInput input = new GuiTextInput(0, 0, 140, 18, state);
-        input.withPercentWidth(1.0F);
-        input.setOnTextChanged(val -> {
-            entry.setDraftValue(val);
-            updateStatusLabel(statusLabel, entry);
+        row.add(GuiTextInput.of(state), input -> {
+            input.withSize(140, 18).withPercentWidth(1.0F);
+            input.setOnTextChanged(val -> {
+                entry.setDraftValue(val);
+                updateStatusLabel(statusLabel, entry);
+            });
         });
-        row.addChild(input);
     }
 
     @SuppressWarnings("unchecked")
-    private void addListEditor(GuiPanel container, ConfigEntryModel entry, int approxPx) {
+    private void addListEditor(GuiPanel container, ConfigEntryModel entry) {
         List<String> list = (List<String>) entry.getDraftValue();
         State<String> newItemState = new State<>("");
-        GuiPanel addRow = GuiPanel.row(4);
-        addRow.setHugContent(false);
-        addRow.withPercentWidth(1.0F);
-        addRow.setHeight(18);
-        addRow.setAlignItems(FlexAlign.CENTER);
+        GuiPanel addRow = container.add(GuiPanel.row(4)
+                .withHugContent(false)
+                .withPercentWidth(1.0F)
+                .withAlignItems(FlexAlign.CENTER));
+        addRow.withSize(0, 18);
 
-        GuiTextInput addInput = new GuiTextInput(0, 0, 100, 16, newItemState);
-        addInput.withPercentWidth(0.82F);
-        addRow.addChild(addInput);
-        addRow.addChild(GuiPanel.spacer());
-        addRow.addChild(new GuiButton(0, 0, 24, 16, "+", () -> {
+        addRow.add(GuiTextInput.of(newItemState), input -> input.withPercentWidth(-1.0F).withSize(0, 16).withFlex(1.0F, 1.0F).withMinWidth(40));
+        addRow.add(GuiButton.of("+", () -> {
             String candidate = newItemState.get().trim();
             if (!candidate.isEmpty() && !list.contains(candidate)) {
                 list.add(candidate);
@@ -409,45 +350,26 @@ public class GuiAutomataConfigScreen extends GuiBaseScreen {
                 rebuildMasterList();
                 rebuildDetailPanel();
             }
-        }));
-        container.addChild(addRow);
+        }), btn -> btn.withSize(24, 16));
 
-        GuiScrollPanel itemsScroll = AutomataUiTheme.createTabScroll();
-        itemsScroll.withPercentWidth(1.0F);
-        itemsScroll.setHeight(68);
-        GuiPanel itemsCol = GuiPanel.column(2).withHugContent(true);
-        itemsCol.withPercentWidth(1.0F);
+        GuiScrollPanel itemsScroll = container.add(GuiScrollPanel.vertical(68, 2).withContentPadding(2));
+        itemsScroll.withPercentWidth(-1.0F).withFlex(1.0F, 1.0F).withMinHeight(40);
+        GuiPanel itemsCol = itemsScroll.add(GuiPanel.column(2).withHugContent(true).withPercentWidth(1.0F));
         for (int i = 0; i < list.size(); i++) {
             int idx = i;
-            GuiPanel itemRow = GuiPanel.row(4);
-            itemRow.setHugContent(false);
-            itemRow.withPercentWidth(1.0F);
-            itemRow.setHeight(16);
-            itemRow.setAlignItems(FlexAlign.CENTER);
-            itemRow.addChild(new GuiLabel(0, 0, trimToWidth("• " + list.get(i), approxPx - 36), AutomataUiTheme.COLOR_MUTED));
-            itemRow.addChild(GuiPanel.spacer());
-            itemRow.addChild(new GuiButton(0, 0, 18, 14, "x", () -> {
+            GuiPanel itemRow = itemsCol.add(GuiPanel.row(4)
+                    .withHugContent(false)
+                    .withPercentWidth(1.0F)
+                    .withAlignItems(FlexAlign.CENTER));
+            itemRow.withSize(0, 16);
+            itemRow.add(new MarqueeLabel(0, 14, "• " + list.get(i), AutomataUiTheme.COLOR_MUTED),
+                    lbl -> lbl.withFlex(1.0F, 1.0F).withMinWidth(40));
+            itemRow.add(GuiButton.of("x", () -> {
                 list.remove(idx);
                 rebuildMasterList();
                 rebuildDetailPanel();
-            }));
-            itemsCol.addChild(itemRow);
+            }), btn -> btn.withSize(18, 14));
         }
-        itemsScroll.addChild(itemsCol);
-        container.addChild(itemsScroll);
-    }
-
-    private String trimToWidth(String text, int maxPx) {
-        if (text == null || maxPx <= 8) {
-            return "";
-        }
-        if (this.mc != null && this.mc.fontRenderer != null) {
-            if (this.mc.fontRenderer.getStringWidth(text) <= maxPx) {
-                return text;
-            }
-            return this.mc.fontRenderer.trimStringToWidth(text, Math.max(8, maxPx - 8)) + "..";
-        }
-        return text;
     }
 
     private void saveAndClose() {
@@ -458,26 +380,6 @@ public class GuiAutomataConfigScreen extends GuiBaseScreen {
         MinecraftForge.EVENT_BUS.post(new ConfigChangedEvent.OnConfigChangedEvent(
                 AutomataMod.MOD_ID, null, isWorldRunning, false));
         closeScreen();
-    }
-
-    private static final class GuiIntSlider extends GuiSlider<Integer> {
-
-        GuiIntSlider(int x, int y, int width, int height, State<Integer> state, int min, int max) {
-            super(x, y, width, height, state, min, max, 1);
-        }
-
-        @Override
-        protected double getPercentage(Integer value) {
-            if (max <= min) {
-                return 0.0D;
-            }
-            return MathHelper.clamp((double) (value - min) / (double) (max - min), 0.0D, 1.0D);
-        }
-
-        @Override
-        protected Integer getValueFromPercentage(double pct) {
-            return MathHelper.clamp((int) Math.round(min + pct * (max - min)), min, max);
-        }
     }
 
     static float computeMarqueeOffset(int textWidth, int availableWidth, float elapsedSeconds) {
@@ -520,19 +422,11 @@ public class GuiAutomataConfigScreen extends GuiBaseScreen {
         int availW = Math.max(8, boxW - pad * 2);
         float offset = computeMarqueeOffset(textW, availW, elapsedSeconds);
 
-        Minecraft mc = Minecraft.getMinecraft();
-        ScaledResolution sr = new ScaledResolution(mc);
-        int scale = sr.getScaleFactor();
-        boolean wasScissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
-        GL11.glEnable(GL11.GL_SCISSOR_TEST);
-        GL11.glScissor(
-                (boxX + pad) * scale,
-                mc.displayHeight - (boxY + boxH) * scale,
-                Math.max(1, availW * scale),
-                Math.max(1, boxH * scale));
-        gfx.drawString(text, (boxX + pad) - offset, textY, color, true);
-        if (!wasScissor) {
-            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        gfx.pushClip(boxX + pad, boxY, Math.max(1, availW), Math.max(1, boxH));
+        try {
+            gfx.drawString(text, (boxX + pad) - offset, textY, color, true);
+        } finally {
+            gfx.popClip();
         }
     }
 

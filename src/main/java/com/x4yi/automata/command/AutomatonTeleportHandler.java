@@ -36,10 +36,6 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import com.x4yi.automata.AutomataMod;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Intercepts /tp and /teleport only when at least one argument uses the mandatory '.' prefix
- * (for example: /tp .jesi), resolving named automata as player-like targets.
- */
 @Mod.EventBusSubscriber(modid = AutomataMod.MOD_ID)
 public final class AutomatonTeleportHandler {
 

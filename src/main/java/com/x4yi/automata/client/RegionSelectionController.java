@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
 
 package com.x4yi.automata.client;
 
@@ -18,7 +14,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.util.EnumHand;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.text.TextComponentString;
+import net.minecraft.util.text.TextComponentTranslation;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
@@ -27,9 +23,6 @@ import net.minecraftforge.fml.relauncher.Side;
 
 import com.x4yi.automata.AutomataMod;
 
-/**
- * Handles interactive in-world Point A -> Point B region selection triggered from the automaton GUI.
- */
 @Mod.EventBusSubscriber(modid = AutomataMod.MOD_ID, value = Side.CLIENT)
 public final class RegionSelectionController {
 
@@ -51,14 +44,14 @@ public final class RegionSelectionController {
         if (mc.currentScreen != null) {
             mc.displayGuiScreen(null);
         }
-        sendStatus("Right-Click block for Point A, then press ENTER to confirm");
+        sendStatus("message.automata.zone.pick_a");
     }
 
     public static void cancelSession() {
         if (activeEntityId != -1) {
             activeEntityId = -1;
             selectingB = false;
-            sendStatus("Zone selection cancelled");
+            sendStatus("message.automata.zone.cancelled");
         }
     }
 
@@ -93,10 +86,10 @@ public final class RegionSelectionController {
         BlockPos pos = event.getPos().toImmutable();
         if (!selectingB) {
             pointA = pos;
-            sendStatus(String.format("Point A: %d, %d, %d — Press ENTER to confirm", pos.getX(), pos.getY(), pos.getZ()));
+            sendStatus("message.automata.zone.point_a", pos.getX(), pos.getY(), pos.getZ());
         } else {
             pointB = pos;
-            sendStatus(String.format("Point B: %d, %d, %d — Press ENTER to apply", pos.getX(), pos.getY(), pos.getZ()));
+            sendStatus("message.automata.zone.point_b", pos.getX(), pos.getY(), pos.getZ());
         }
     }
 
@@ -124,14 +117,14 @@ public final class RegionSelectionController {
         if (key == KeyCodes.ENTER || key == KeyCodes.NUMPAD_ENTER) {
             if (!selectingB) {
                 if (pointA == null) {
-                    sendStatus("Right-Click a block to pick Point A first");
+                    sendStatus("message.automata.zone.need_a");
                     return;
                 }
                 selectingB = true;
-                sendStatus("Point A locked! Right-Click block for Point B, then press ENTER");
+                sendStatus("message.automata.zone.locked_a");
             } else {
                 if (pointB == null) {
-                    sendStatus("Right-Click a block to pick Point B first");
+                    sendStatus("message.automata.zone.need_b");
                     return;
                 }
                 commitSelection();
@@ -154,10 +147,10 @@ public final class RegionSelectionController {
         UINetwork.sendActionToServer("automata:set_zone_ab", tag);
     }
 
-    private static void sendStatus(String msg) {
+    private static void sendStatus(String key, Object... args) {
         EntityPlayer player = Minecraft.getMinecraft().player;
         if (player != null) {
-            player.sendStatusMessage(new TextComponentString("[Automata] " + msg), true);
+            player.sendStatusMessage(new TextComponentTranslation(key, args), true);
         }
     }
 }

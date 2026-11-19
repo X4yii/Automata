@@ -9,9 +9,6 @@ import net.minecraftforge.fml.client.IModGuiFactory;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 
-/**
- * Forge {@link IModGuiFactory} entrypoint replacing the default Forge Config GUI with X4UI.
- */
 @SideOnly(Side.CLIENT)
 public class AutomataGuiFactory implements IModGuiFactory {
 

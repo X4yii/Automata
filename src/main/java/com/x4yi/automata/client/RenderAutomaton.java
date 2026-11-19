@@ -16,6 +16,8 @@ import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.model.ModelBiped;
 import net.minecraft.client.model.ModelPlayer;
 import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.client.renderer.OpenGlHelper;
+import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
 import net.minecraft.client.renderer.entity.RenderBiped;
 import net.minecraft.client.renderer.entity.RenderManager;
@@ -53,6 +55,11 @@ public class RenderAutomaton extends RenderBiped<EntityAutomaton> {
     private static final float PLAYER_RENDER_SCALE = 0.9375F;
     private static final float AUTOMATON_RENDER_SCALE = PLAYER_RENDER_SCALE;
     private static final java.lang.reflect.Method AQUA_SET_SWIM_ANIMATION = resolveAquaSwimMethod();
+    private static boolean guiPreviewRender = false;
+
+    public static void setGuiPreviewRender(boolean active) {
+        guiPreviewRender = active;
+    }
 
     @Nullable
     private static java.lang.reflect.Method resolveAquaSwimMethod() {
@@ -78,21 +85,37 @@ public class RenderAutomaton extends RenderBiped<EntityAutomaton> {
         ModelPlayer model = entity.isSlimModel() ? alexModel : steveModel;
         this.mainModel = model;
         setModelVisibilities(entity, model);
-        if (AQUA_SET_SWIM_ANIMATION != null && AQUA_SET_SWIM_ANIMATION.getDeclaringClass().isInstance(model)) {
+        if (guiPreviewRender) {
+            model.isSneak = false;
+        } else if (AQUA_SET_SWIM_ANIMATION != null && AQUA_SET_SWIM_ANIMATION.getDeclaringClass().isInstance(model)) {
             try {
                 AQUA_SET_SWIM_ANIMATION.invoke(model, entity.getSwimAnimation(partialTicks));
             } catch (Throwable ignored) {
             }
         }
-        double renderY = entity.isSneaking() ? y - 0.125D : y;
+        double renderY = (!guiPreviewRender && entity.isSneaking()) ? y - 0.125D : y;
         super.doRender(entity, x, renderY, z, entityYaw, partialTicks);
-        if (entity.getNeededTool() != EntityAutomaton.NEEDED_TOOL_NONE) {
+        if (!guiPreviewRender && entity.getNeededTool() != EntityAutomaton.NEEDED_TOOL_NONE) {
             renderNeededToolIndicator(entity, x, renderY, z);
         }
     }
 
+    @Override
+    protected boolean canRenderName(EntityAutomaton entity) {
+        return !guiPreviewRender && super.canRenderName(entity);
+    }
+
+    @Override
+    public void setLightmap(EntityAutomaton entityLivingIn) {
+        if (guiPreviewRender) {
+            OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, 240.0F, 240.0F);
+            return;
+        }
+        super.setLightmap(entityLivingIn);
+    }
+
     private void renderNeededToolIndicator(EntityAutomaton entity, double x, double y, double z) {
-        ItemStack toolStack = pickDisplayToolStack(entity, entity.getNeededTool());
+        ItemStack toolStack = pickDisplayToolStack(entity.getNeededTool());
         if (toolStack.isEmpty()) {
             return;
         }
@@ -105,7 +128,12 @@ public class RenderAutomaton extends RenderBiped<EntityAutomaton> {
         GlStateManager.pushMatrix();
         GlStateManager.translate(-0.14F, 0.0F, 0.0F);
         GlStateManager.scale(0.45F, 0.45F, 0.45F);
-        Minecraft.getMinecraft().getRenderItem().renderItem(toolStack, ItemCameraTransforms.TransformType.GUI);
+        GlStateManager.enableRescaleNormal();
+        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+        RenderHelper.enableStandardItemLighting();
+        Minecraft.getMinecraft().getRenderItem().renderItem(toolStack, ItemCameraTransforms.TransformType.FIXED);
+        RenderHelper.disableStandardItemLighting();
+        GlStateManager.disableRescaleNormal();
         GlStateManager.popMatrix();
 
         FontRenderer font = getFontRendererFromRenderManager();
@@ -120,44 +148,13 @@ public class RenderAutomaton extends RenderBiped<EntityAutomaton> {
         GlStateManager.popMatrix();
     }
 
-    private static ItemStack pickDisplayToolStack(EntityAutomaton entity, byte toolType) {
-        int variant = (int) ((entity.ticksExisted / 16L + entity.getEntityId()) % 5L);
+    private static ItemStack pickDisplayToolStack(byte toolType) {
         Item item = switch (toolType) {
-            case EntityAutomaton.NEEDED_TOOL_PICKAXE -> switch (variant) {
-                case 0 -> Items.WOODEN_PICKAXE;
-                case 1 -> Items.STONE_PICKAXE;
-                case 2 -> Items.IRON_PICKAXE;
-                case 3 -> Items.GOLDEN_PICKAXE;
-                default -> Items.DIAMOND_PICKAXE;
-            };
-            case EntityAutomaton.NEEDED_TOOL_AXE -> switch (variant) {
-                case 0 -> Items.WOODEN_AXE;
-                case 1 -> Items.STONE_AXE;
-                case 2 -> Items.IRON_AXE;
-                case 3 -> Items.GOLDEN_AXE;
-                default -> Items.DIAMOND_AXE;
-            };
-            case EntityAutomaton.NEEDED_TOOL_SHOVEL -> switch (variant) {
-                case 0 -> Items.WOODEN_SHOVEL;
-                case 1 -> Items.STONE_SHOVEL;
-                case 2 -> Items.IRON_SHOVEL;
-                case 3 -> Items.GOLDEN_SHOVEL;
-                default -> Items.DIAMOND_SHOVEL;
-            };
-            case EntityAutomaton.NEEDED_TOOL_HOE -> switch (variant) {
-                case 0 -> Items.WOODEN_HOE;
-                case 1 -> Items.STONE_HOE;
-                case 2 -> Items.IRON_HOE;
-                case 3 -> Items.GOLDEN_HOE;
-                default -> Items.DIAMOND_HOE;
-            };
-            case EntityAutomaton.NEEDED_TOOL_SWORD -> switch (variant) {
-                case 0 -> Items.WOODEN_SWORD;
-                case 1 -> Items.STONE_SWORD;
-                case 2 -> Items.IRON_SWORD;
-                case 3 -> Items.GOLDEN_SWORD;
-                default -> Items.DIAMOND_SWORD;
-            };
+            case EntityAutomaton.NEEDED_TOOL_PICKAXE -> Items.DIAMOND_PICKAXE;
+            case EntityAutomaton.NEEDED_TOOL_AXE -> Items.DIAMOND_AXE;
+            case EntityAutomaton.NEEDED_TOOL_SHOVEL -> Items.DIAMOND_SHOVEL;
+            case EntityAutomaton.NEEDED_TOOL_HOE -> Items.DIAMOND_HOE;
+            case EntityAutomaton.NEEDED_TOOL_SWORD -> Items.DIAMOND_SWORD;
             default -> null;
         };
         return item == null ? ItemStack.EMPTY : new ItemStack(item);
@@ -202,6 +199,9 @@ public class RenderAutomaton extends RenderBiped<EntityAutomaton> {
     @Override
     protected void applyRotations(EntityAutomaton entityLiving, float ageInTicks, float rotationYaw, float partialTicks) {
         super.applyRotations(entityLiving, ageInTicks, rotationYaw, partialTicks);
+        if (guiPreviewRender) {
+            return;
+        }
         if (entityLiving.isDowned()) {
             GlStateManager.translate(0.0F, 0.12F, 0.0F);
             GlStateManager.rotate(90.0F, 1.0F, 0.0F, 0.0F);
@@ -209,7 +209,7 @@ public class RenderAutomaton extends RenderBiped<EntityAutomaton> {
             return;
         }
         float swimAnim = entityLiving.getSwimAnimation(partialTicks);
-        if (swimAnim > 0.0F) {
+        if (EntityAutomaton.isAquaAcrobaticsLoaded() && swimAnim > 0.0F) {
             float pitch = entityLiving.isInWater() ? -90.0F - entityLiving.rotationPitch : -90.0F;
             float angle = pitch * swimAnim;
             GlStateManager.rotate(angle, 1.0F, 0.0F, 0.0F);

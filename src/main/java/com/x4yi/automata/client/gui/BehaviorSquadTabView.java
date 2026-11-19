@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
 
 package com.x4yi.automata.client.gui;
 
@@ -32,9 +28,6 @@ import net.minecraftforge.fml.relauncher.SideOnly;
 
 import com.x4yi.automata.client.gui.AutomatonGuiState.SquadmateEntry;
 
-/**
- * Consolidated Squad view uniting squad coordination, entity targeting filters, movement flags, and skin.
- */
 @SideOnly(Side.CLIENT)
 public final class BehaviorSquadTabView {
 
@@ -60,7 +53,7 @@ public final class BehaviorSquadTabView {
         this.root = AutomataUiTheme.createTabScroll();
 
         GuiPanel squadCard = AutomataUiTheme.makeCard(tr("gui.automata.squad.title", "Squad Coordination"), 4);
-        squadCard.addChild(makeSyncedToggle(
+        squadCard.add(makeSyncedToggle(
                 "Squad Cooperation",
                 state.squadCoopState,
                 () -> state.getTaskConfig().isSquadCooperation(),
@@ -68,34 +61,31 @@ public final class BehaviorSquadTabView {
                 sendAction,
                 refreshSnapshot));
 
-        GuiPanel chanRow = GuiPanel.row(4);
-        chanRow.setHugContent(true);
-        chanRow.withPercentWidth(1.0F);
-        this.squadChannelInput = (GuiTextInput) new GuiTextInput(0, 0, 0, 18).withPercentWidth(0.62F);
-        squadChannelInput.setPlaceholder(tr("gui.automata.squad.channel_placeholder", "Squad channel..."));
-        squadChannelInput.setSubmitKey(KeyCodes.ENTER);
-        squadChannelInput.onEnter(() -> submitSquadChannel(sendAction, refreshSnapshot));
-        chanRow.addChild(squadChannelInput);
+        GuiPanel chanRow = GuiPanel.row(4)
+                .withHugContent(true)
+                .withPercentWidth(1.0F);
+        this.squadChannelInput = chanRow.add(new GuiTextInput(0, 0, 0, 18), input -> {
+            input.withPercentWidth(-1.0F).withFlex(1.0F, 1.0F).withMinWidth(48);
+            input.setPlaceholder(tr("gui.automata.squad.channel_placeholder", "Squad channel..."));
+            input.setSubmitKey(KeyCodes.ENTER);
+            input.onEnter(() -> submitSquadChannel(sendAction, refreshSnapshot));
+        });
 
-        GuiButton applyChanBtn = new GuiButton(
-                0, 0, 44, 18, tr("gui.automata.squad.apply", "Apply"),
-                () -> submitSquadChannel(sendAction, refreshSnapshot)).withVariant(GuiButton.Variant.PRIMARY);
-        applyChanBtn.withPercentWidth(0.24F);
-        chanRow.addChild(applyChanBtn);
+        chanRow.add(GuiButton.of(
+                tr("gui.automata.squad.apply", "Apply"),
+                () -> submitSquadChannel(sendAction, refreshSnapshot)).withVariant(GuiButton.Variant.PRIMARY),
+                btn -> btn.withSize(42, 18));
 
-        GuiButton clearChanBtn = new GuiButton(
-                0, 0, 18, 18, "x",
-                () -> squadChannelInput.setText("")).withVariant(GuiButton.Variant.DANGER);
-        clearChanBtn.withPercentWidth(0.10F);
-        chanRow.addChild(clearChanBtn);
-        squadCard.addChild(chanRow);
+        chanRow.add(GuiButton.of("x", () -> squadChannelInput.setText("")).withVariant(GuiButton.Variant.DANGER),
+                btn -> btn.withSize(18, 18));
+        squadCard.add(chanRow);
 
-        this.squadCountLabel = new GuiLabel(0, 0, "Nearby Squadmates: 0", AutomataUiTheme.COLOR_MUTED);
-        squadCard.addChild(squadCountLabel);
+        this.squadCountLabel = squadCard.add(GuiLabel.of("Nearby Squadmates: 0", AutomataUiTheme.COLOR_MUTED));
 
-        this.squadList = (GuiVirtualList<SquadmateEntry>) new GuiVirtualList<SquadmateEntry>(
-                0, 0, 0, 54, 16,
-                entry -> new GuiLabel(0, 0, "", AutomataUiTheme.COLOR_TEXT),
+        this.squadList = squadCard.add(GuiVirtualList.of(
+                54,
+                16,
+                entry -> GuiLabel.of("", AutomataUiTheme.COLOR_TEXT).withPercentWidth(1.0F),
                 (comp, entry) -> {
                     GuiLabel lbl = (GuiLabel) comp;
                     String status = entry.downed
@@ -108,42 +98,41 @@ public final class BehaviorSquadTabView {
                             status,
                             entry.distance));
                     lbl.setColor(entry.downed ? AutomataUiTheme.COLOR_RED : AutomataUiTheme.COLOR_TEXT);
-                }).withPercentWidth(1.0F);
-        squadCard.addChild(squadList);
-        root.addChild(squadCard);
+                }));
+        root.add(squadCard);
 
         GuiPanel filterCard = AutomataUiTheme.makeCard("Entity Targeting Filter", 4);
-        GuiPanel searchRow = GuiPanel.row(4);
-        searchRow.setHugContent(true);
-        searchRow.withPercentWidth(1.0F);
+        GuiPanel searchRow = GuiPanel.row(4)
+                .withHugContent(true)
+                .withPercentWidth(1.0F);
 
-        this.filterSearchInput = (GuiTextInput) new GuiTextInput(0, 0, 0, 18).withPercentWidth(0.52F);
-        filterSearchInput.setPlaceholder("Search entity id...");
-        filterSearchInput.setSubmitKey(KeyCodes.ENTER);
-        filterSearchInput.setOnTextChanged(q -> rebuildFilterList());
-        searchRow.addChild(filterSearchInput);
+        this.filterSearchInput = searchRow.add(new GuiTextInput(0, 0, 0, 18), input -> {
+            input.withPercentWidth(-1.0F).withFlex(1.0F, 1.0F).withMinWidth(48);
+            input.setPlaceholder("Search entity id...");
+            input.setSubmitKey(KeyCodes.ENTER);
+            input.setOnTextChanged(q -> rebuildFilterList());
+        });
 
-        this.whitelistButton = new GuiButton(
-                0, 0, 60, 18,
+        this.whitelistButton = searchRow.add(GuiButton.of(
                 state.whitelistState.get() ? "Whitelist" : "Blacklist",
                 () -> {
                     sendAction.accept("automata:toggle_whitelist", null);
                     refreshSnapshot.run();
-                }).withVariant(GuiButton.Variant.PRIMARY);
-        whitelistButton.withPercentWidth(0.26F);
-        searchRow.addChild(whitelistButton);
+                }).withVariant(GuiButton.Variant.PRIMARY));
+        whitelistButton.withSize(56, 18);
+        whitelistButton.bindState(state.whitelistState, wl ->
+                whitelistButton.setText(Boolean.TRUE.equals(wl) ? "Whitelist" : "Blacklist"));
 
-        GuiButton clearFiltersBtn = new GuiButton(0, 0, 44, 18, "Clear", () -> {
+        searchRow.add(GuiButton.of("Clear", () -> {
             sendAction.accept("automata:clear_filters", null);
             refreshSnapshot.run();
-        }).withVariant(GuiButton.Variant.DANGER);
-        clearFiltersBtn.withPercentWidth(0.18F);
-        searchRow.addChild(clearFiltersBtn);
-        filterCard.addChild(searchRow);
+        }).withVariant(GuiButton.Variant.DANGER), btn -> btn.withSize(38, 18));
+        filterCard.add(searchRow);
 
-        this.filterVirtualList = (GuiVirtualList<EntityFilterEntry>) new GuiVirtualList<EntityFilterEntry>(
-                0, 0, 0, 96, 20,
-                entry -> new GuiButton(0, 0, 0, 18, "", () -> {}).withPercentWidth(1.0F),
+        this.filterVirtualList = filterCard.add(GuiVirtualList.of(
+                96,
+                20,
+                entry -> GuiButton.of("", () -> {}).withSize(0, 18).withPercentWidth(1.0F),
                 (comp, entry) -> {
                     GuiButton btn = (GuiButton) comp;
                     btn.setText((entry.selected ? "[x] " : "[ ] ") + entry.id);
@@ -154,33 +143,32 @@ public final class BehaviorSquadTabView {
                         sendAction.accept("automata:toggle_filter_entity", data);
                         refreshSnapshot.run();
                     });
-                }).withPercentWidth(1.0F);
-        filterCard.addChild(filterVirtualList);
-        root.addChild(filterCard);
+                }));
+        root.add(filterCard);
 
         GuiPanel moveCard = AutomataUiTheme.makeCard("Movement & Appearance", 4);
-        moveCard.addChild(makeSyncedToggle(
+        moveCard.add(makeSyncedToggle(
                 "Allow Break-Through",
                 state.breakThroughState,
                 () -> state.getTaskConfig().isAllowBreakThrough(),
                 "automata:toggle_terrain",
                 sendAction,
                 refreshSnapshot));
-        moveCard.addChild(makeSyncedToggle(
+        moveCard.add(makeSyncedToggle(
                 "Allow Parkour Jumps",
                 state.parkourState,
                 () -> state.getTaskConfig().isAllowParkour(),
                 "automata:toggle_parkour",
                 sendAction,
                 refreshSnapshot));
-        moveCard.addChild(makeSyncedToggle(
+        moveCard.add(makeSyncedToggle(
                 "Allow Pillar / Bridge",
                 state.scaffoldingState,
                 () -> state.getTaskConfig().isAllowScaffolding(),
                 "automata:toggle_scaffolding",
                 sendAction,
                 refreshSnapshot));
-        moveCard.addChild(makeSyncedToggle(
+        moveCard.add(makeSyncedToggle(
                 "Slim Model (Alex)",
                 state.slimState,
                 () -> Boolean.TRUE.equals(state.slimState.get()),
@@ -188,52 +176,45 @@ public final class BehaviorSquadTabView {
                 sendAction,
                 refreshSnapshot));
 
-        GuiPanel nameRow = GuiPanel.row(4);
-        nameRow.setHugContent(true);
-        nameRow.withPercentWidth(1.0F);
-        this.nameInput = (GuiTextInput) new GuiTextInput(0, 0, 0, 18).withPercentWidth(0.62F);
-        nameInput.setPlaceholder(tr("gui.automata.squad.name_placeholder", "Automaton name (.name)..."));
-        nameInput.setSubmitKey(KeyCodes.ENTER);
-        nameInput.onEnter(() -> submitName(sendAction, refreshSnapshot));
-        nameRow.addChild(nameInput);
+        GuiPanel nameRow = GuiPanel.row(4)
+                .withHugContent(true)
+                .withPercentWidth(1.0F);
+        this.nameInput = nameRow.add(new GuiTextInput(0, 0, 0, 18), input -> {
+            input.withPercentWidth(-1.0F).withFlex(1.0F, 1.0F).withMinWidth(48);
+            input.setPlaceholder(tr("gui.automata.squad.name_placeholder", "Automaton name (.name)..."));
+            input.setSubmitKey(KeyCodes.ENTER);
+            input.onEnter(() -> submitName(sendAction, refreshSnapshot));
+        });
 
-        GuiButton applyNameBtn = new GuiButton(
-                0, 0, 44, 18, tr("gui.automata.squad.apply", "Apply"),
-                () -> submitName(sendAction, refreshSnapshot)).withVariant(GuiButton.Variant.PRIMARY);
-        applyNameBtn.withPercentWidth(0.24F);
-        nameRow.addChild(applyNameBtn);
+        nameRow.add(GuiButton.of(
+                tr("gui.automata.squad.apply", "Apply"),
+                () -> submitName(sendAction, refreshSnapshot)).withVariant(GuiButton.Variant.PRIMARY),
+                btn -> btn.withSize(42, 18));
 
-        GuiButton clearNameBtn = new GuiButton(
-                0, 0, 18, 18, "x",
-                () -> nameInput.setText("")).withVariant(GuiButton.Variant.DANGER);
-        clearNameBtn.withPercentWidth(0.10F);
-        nameRow.addChild(clearNameBtn);
-        moveCard.addChild(nameRow);
+        nameRow.add(GuiButton.of("x", () -> nameInput.setText("")).withVariant(GuiButton.Variant.DANGER),
+                btn -> btn.withSize(18, 18));
+        moveCard.add(nameRow);
 
-        GuiPanel skinRow = GuiPanel.row(4);
-        skinRow.setHugContent(true);
-        skinRow.withPercentWidth(1.0F);
-        this.skinInput = (GuiTextInput) new GuiTextInput(0, 0, 0, 18).withPercentWidth(0.62F);
-        skinInput.setPlaceholder(tr("gui.automata.squad.skin_placeholder", "Skin username..."));
-        skinInput.setSubmitKey(KeyCodes.ENTER);
-        skinInput.onEnter(() -> submitSkin(sendAction, refreshSnapshot));
-        skinRow.addChild(skinInput);
+        GuiPanel skinRow = GuiPanel.row(4)
+                .withHugContent(true)
+                .withPercentWidth(1.0F);
+        this.skinInput = skinRow.add(new GuiTextInput(0, 0, 0, 18), input -> {
+            input.withPercentWidth(-1.0F).withFlex(1.0F, 1.0F).withMinWidth(48);
+            input.setPlaceholder(tr("gui.automata.squad.skin_placeholder", "Skin username..."));
+            input.setSubmitKey(KeyCodes.ENTER);
+            input.onEnter(() -> submitSkin(sendAction, refreshSnapshot));
+        });
 
-        GuiButton applySkinBtn = new GuiButton(
-                0, 0, 44, 18, tr("gui.automata.squad.apply", "Apply"),
-                () -> submitSkin(sendAction, refreshSnapshot)).withVariant(GuiButton.Variant.PRIMARY);
-        applySkinBtn.withPercentWidth(0.24F);
-        skinRow.addChild(applySkinBtn);
+        skinRow.add(GuiButton.of(
+                tr("gui.automata.squad.apply", "Apply"),
+                () -> submitSkin(sendAction, refreshSnapshot)).withVariant(GuiButton.Variant.PRIMARY),
+                btn -> btn.withSize(42, 18));
 
-        GuiButton clearSkinBtn = new GuiButton(
-                0, 0, 18, 18, "x",
-                () -> skinInput.setText("")).withVariant(GuiButton.Variant.DANGER);
-        clearSkinBtn.withPercentWidth(0.10F);
-        skinRow.addChild(clearSkinBtn);
-        moveCard.addChild(skinRow);
-        root.addChild(moveCard);
+        skinRow.add(GuiButton.of("x", () -> skinInput.setText("")).withVariant(GuiButton.Variant.DANGER),
+                btn -> btn.withSize(18, 18));
+        moveCard.add(skinRow);
+        root.add(moveCard);
 
-        state.whitelistState.addListener(wl -> whitelistButton.setText(Boolean.TRUE.equals(wl) ? "Whitelist" : "Blacklist"));
         state.addSnapshotListener(this::syncFromState);
         syncFromState();
     }
@@ -245,12 +226,13 @@ public final class BehaviorSquadTabView {
             String actionId,
             BiConsumer<String, NBTTagCompound> sendAction,
             Runnable refreshSnapshot) {
-        GuiToggle toggle = (GuiToggle) new GuiToggle(0, 0, 0, 18, label, Boolean.TRUE.equals(boundState.get()), val -> {
+        GuiToggle toggle = new GuiToggle(0, 0, 0, 18, label, Boolean.TRUE.equals(boundState.get()), val -> {
             if (!state.isApplyingSnapshot() && val != currentVal.getAsBoolean()) {
                 sendAction.accept(actionId, null);
                 refreshSnapshot.run();
             }
-        }).withPercentWidth(1.0F);
+        });
+        toggle.withPercentWidth(1.0F);
         toggle.bindState(boundState);
         return toggle;
     }
@@ -298,16 +280,19 @@ public final class BehaviorSquadTabView {
         String nextSquad = state.getTaskConfig().getSquadChannel();
         if (!squadChannelInput.isFocused() && !Objects.equals(nextSquad, lastSyncedSquad)) {
             squadChannelInput.setText(nextSquad);
+            squadChannelInput.setCursorPosition(0);
             lastSyncedSquad = nextSquad;
         }
         String nextName = state.getAutomatonName();
         if (!nameInput.isFocused() && !Objects.equals(nextName, lastSyncedName)) {
             nameInput.setText(nextName);
+            nameInput.setCursorPosition(0);
             lastSyncedName = nextName;
         }
         String nextSkin = state.getSkinName();
         if (!skinInput.isFocused() && !Objects.equals(nextSkin, lastSyncedSkin)) {
             skinInput.setText(nextSkin);
+            skinInput.setCursorPosition(0);
             lastSyncedSkin = nextSkin;
         }
         List<SquadmateEntry> mates = state.getSquadmates();

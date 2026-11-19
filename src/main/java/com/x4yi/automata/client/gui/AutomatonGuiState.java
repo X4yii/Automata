@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
 
 package com.x4yi.automata.client.gui;
 
@@ -24,9 +20,6 @@ import com.x4yi.automata.client.RegionSelectionRenderer;
 import com.x4yi.automata.entity.EntityAutomaton;
 import com.x4yi.automata.gui.ContainerAutomaton;
 
-/**
- * Reactive client-side state store and RPC snapshot parser for {@link GuiAutomatonScreen}.
- */
 @SideOnly(Side.CLIENT)
 public final class AutomatonGuiState {
 

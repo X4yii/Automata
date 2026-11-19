@@ -1,8 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
-
 package com.x4yi.automata.client.gui;
 
 import com.x4yi.x4ui.api.client.gui.IGraphics;
@@ -10,15 +5,11 @@ import com.x4yi.x4ui.client.gui.component.GuiComponent;
 import com.x4yi.x4ui.client.gui.component.GuiLabel;
 import com.x4yi.x4ui.client.gui.component.GuiPanel;
 import com.x4yi.x4ui.client.gui.component.GuiScrollPanel;
-import com.x4yi.x4ui.client.gui.utils.Insets;
 
 import net.minecraft.util.math.BlockPos;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 
-/**
- * Unified vanilla-darkmode palette, layout builders, and reusable visual widgets for the Automata GUI.
- */
 @SideOnly(Side.CLIENT)
 public final class AutomataUiTheme {
 
@@ -43,23 +34,20 @@ public final class AutomataUiTheme {
     }
 
     public static GuiPanel makeCard(String title, int gap) {
-        GuiPanel card = GuiPanel.card(6, gap);
-        card.setBackgroundColor(COLOR_CARD);
-        card.setCornerRadius(4);
-        card.setBorderColor(COLOR_BORDER);
-        card.setBorderWidth(1);
-        card.setHugContent(true);
-        card.withPercentWidth(1.0F);
-        GuiLabel heading = new GuiLabel(0, 0, title, COLOR_TEXT);
-        heading.withPercentWidth(1.0F);
-        card.addChild(heading);
+        GuiPanel card = GuiPanel.card(6, gap)
+                .withBackgroundColor(COLOR_CARD)
+                .withCornerRadius(4)
+                .withBorder(1, COLOR_BORDER)
+                .withHugContent(true)
+                .withPercentWidth(1.0F);
+        card.add(GuiLabel.of(title, COLOR_TEXT), heading -> heading.withPercentWidth(1.0F));
         return card;
     }
 
     public static GuiScrollPanel createTabScroll() {
         GuiScrollPanel scroll = GuiScrollPanel.vertical(200, 6);
         scroll.withPercentSize(1.0F, 1.0F);
-        scroll.setPadding(new Insets(6));
+        scroll.withContentPadding(6);
         return scroll;
     }
 
@@ -108,4 +96,3 @@ public final class AutomataUiTheme {
         }
     }
 }
-

@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
 
 package com.x4yi.automata.client.gui;
 
@@ -21,16 +17,13 @@ import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 
 import com.x4yi.automata.ai.AutomatonTaskConfig;
+import com.x4yi.automata.ai.TaskCompletionBehavior;
 import com.x4yi.automata.api.AutomataAPI;
 import com.x4yi.automata.api.AutomatonBuiltInJobs;
 import com.x4yi.automata.api.JobDescriptor;
-import com.x4yi.automata.ai.TaskCompletionBehavior;
 import com.x4yi.automata.client.RegionSelectionController;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Consolidated Tasks view uniting jobs, A-B zone selection, job parameters, and logistics chests.
- */
 @SideOnly(Side.CLIENT)
 public final class TasksLogisticsTabView {
 
@@ -39,9 +32,7 @@ public final class TasksLogisticsTabView {
     private final GuiLabel zoneSummaryLabel;
     private final GuiLabel radiusLabel;
     private final GuiLabel sourceChestLabel;
-    private final GuiLabel depositChestLabel;
-    private final GuiLabel toolChestLabel;
-    private final GuiLabel foodChestLabel;
+    private final GuiLabel savingChestLabel;
 
     public TasksLogisticsTabView(
             EntityAutomaton bot,
@@ -50,82 +41,71 @@ public final class TasksLogisticsTabView {
             Runnable refreshSnapshot) {
         this.root = AutomataUiTheme.createTabScroll();
 
-        GuiPanel jobsCard = AutomataUiTheme.makeCard("Active Job Mode", 4);
+        GuiPanel jobsCard = AutomataUiTheme.makeCard(tr("gui.automata.tasks.active_job", "Active Job Mode"), 4);
         List<JobDescriptor> jobs = AutomataAPI.getAllJobs();
         for (int i = 0; i < jobs.size(); i += 2) {
-            GuiPanel row = GuiPanel.row(4);
-            row.setHugContent(true);
-            row.withPercentWidth(1.0F);
-            row.addChild(createJobButton(jobs.get(i), sendAction, refreshSnapshot));
+            GuiPanel row = GuiPanel.row(4)
+                    .withHugContent(true)
+                    .withPercentWidth(1.0F);
+            row.add(createJobButton(jobs.get(i), sendAction, refreshSnapshot));
             if (i + 1 < jobs.size()) {
-                row.addChild(createJobButton(jobs.get(i + 1), sendAction, refreshSnapshot));
+                row.add(createJobButton(jobs.get(i + 1), sendAction, refreshSnapshot));
             } else {
-                GuiButton stopBtn = new GuiButton(0, 0, 80, 16, "Stop / Idle", () -> {
+                row.add(GuiButton.of(tr("gui.automata.tasks.stop_idle", "Stop / Idle"), () -> {
                     NBTTagCompound data = new NBTTagCompound();
                     data.setString("jobId", AutomatonBuiltInJobs.IDLE.toString());
                     sendAction.accept("automata:set_job", data);
                     refreshSnapshot.run();
-                }).withVariant(GuiButton.Variant.DANGER);
-                stopBtn.withPercentWidth(0.49F);
-                row.addChild(stopBtn);
+                }).withVariant(GuiButton.Variant.DANGER), btn -> btn.withSize(0, 16).withPercentWidth(-1.0F).withFlex(1.0F, 1.0F));
             }
-            jobsCard.addChild(row);
+            jobsCard.add(row);
         }
-        root.addChild(jobsCard);
+        root.add(jobsCard);
 
-        GuiPanel zoneCard = AutomataUiTheme.makeCard("Work Zone (A -> B)", 4);
-        this.zoneSummaryLabel = new GuiLabel(0, 0, "", AutomataUiTheme.COLOR_MUTED);
-        zoneCard.addChild(zoneSummaryLabel);
+        GuiPanel zoneCard = AutomataUiTheme.makeCard(tr("gui.automata.tasks.work_zone", "Work Zone (A -> B)"), 4);
+        this.zoneSummaryLabel = zoneCard.add(GuiLabel.of("", AutomataUiTheme.COLOR_MUTED));
 
-        GuiPanel primaryZoneRow = GuiPanel.row(4);
-        primaryZoneRow.setHugContent(true);
-        primaryZoneRow.withPercentWidth(1.0F);
-        GuiButton selectInWorldBtn = new GuiButton(0, 0, 120, 18, "Select A -> B in World", () -> {
+        GuiPanel primaryZoneRow = GuiPanel.row(4)
+                .withHugContent(true)
+                .withPercentWidth(1.0F);
+        primaryZoneRow.add(GuiButton.of(tr("gui.automata.tasks.select_world", "Select A -> B in World"), () -> {
             AutomatonTaskConfig cfg = state.getTaskConfig();
             RegionSelectionController.startSession(bot.getEntityId(), cfg.getPos1(), cfg.getPos2());
-        }).withVariant(GuiButton.Variant.PRIMARY);
-        selectInWorldBtn.withPercentWidth(0.66F);
-        selectInWorldBtn.withTooltip("Right-Click block for A, ENTER to confirm, then B and ENTER");
-        primaryZoneRow.addChild(selectInWorldBtn);
+        }).withVariant(GuiButton.Variant.PRIMARY), btn -> {
+            btn.withSize(0, 18).withPercentWidth(-1.0F).withFlex(1.0F, 1.0F);
+            btn.withTooltip(tr("gui.automata.tasks.select_world_tip", "Right-Click block for A, ENTER to confirm, then B and ENTER"));
+        });
 
-        GuiButton clearZoneBtn = new GuiButton(0, 0, 50, 18, "Clear", () -> {
+        primaryZoneRow.add(GuiButton.of(tr("gui.automata.tasks.clear", "Clear"), () -> {
             sendAction.accept("automata:clear_zone", null);
             refreshSnapshot.run();
-        }).withVariant(GuiButton.Variant.DANGER);
-        clearZoneBtn.withPercentWidth(0.32F);
-        primaryZoneRow.addChild(clearZoneBtn);
-        zoneCard.addChild(primaryZoneRow);
+        }).withVariant(GuiButton.Variant.DANGER), btn -> btn.withSize(48, 18));
+        zoneCard.add(primaryZoneRow);
 
-        GuiPanel quickZoneRow = GuiPanel.row(4);
-        quickZoneRow.setHugContent(true);
-        quickZoneRow.withPercentWidth(1.0F);
-        GuiButton ptABtn = new GuiButton(0, 0, 60, 16, "Pt A Here", () -> {
+        GuiPanel quickZoneRow = GuiPanel.row(4)
+                .withHugContent(true)
+                .withPercentWidth(1.0F);
+        quickZoneRow.add(GuiButton.of(tr("gui.automata.tasks.pt_a_here", "Pt A Here"), () -> {
             sendAction.accept("automata:set_pos1_here", null);
             refreshSnapshot.run();
-        }).withVariant(GuiButton.Variant.GHOST);
-        ptABtn.withPercentWidth(0.49F);
-        GuiButton ptBBtn = new GuiButton(0, 0, 60, 16, "Pt B Here", () -> {
+        }).withVariant(GuiButton.Variant.GHOST), btn -> btn.withSize(0, 16).withPercentWidth(-1.0F).withFlex(1.0F, 1.0F));
+        quickZoneRow.add(GuiButton.of(tr("gui.automata.tasks.pt_b_here", "Pt B Here"), () -> {
             sendAction.accept("automata:set_pos2_here", null);
             refreshSnapshot.run();
-        }).withVariant(GuiButton.Variant.GHOST);
-        ptBBtn.withPercentWidth(0.49F);
-        quickZoneRow.addChild(ptABtn);
-        quickZoneRow.addChild(ptBBtn);
-        zoneCard.addChild(quickZoneRow);
-        root.addChild(zoneCard);
+        }).withVariant(GuiButton.Variant.GHOST), btn -> btn.withSize(0, 16).withPercentWidth(-1.0F).withFlex(1.0F, 1.0F));
+        zoneCard.add(quickZoneRow);
+        root.add(zoneCard);
 
-        GuiPanel paramsCard = AutomataUiTheme.makeCard("Job Options & Combat Radius", 4);
-        this.radiusLabel = new GuiLabel(
-                0, 0,
-                "Combat Radius: " + Math.round(state.radiusState.get()) + "m",
-                AutomataUiTheme.COLOR_MUTED);
-        paramsCard.addChild(radiusLabel);
+        GuiPanel paramsCard = AutomataUiTheme.makeCard(tr("gui.automata.tasks.job_options", "Job Options & Combat Radius"), 4);
+        this.radiusLabel = paramsCard.add(GuiLabel.of(
+                formatCombatRadius(Math.round(state.radiusState.get())),
+                AutomataUiTheme.COLOR_MUTED));
 
-        GuiSliderDouble radiusSlider = (GuiSliderDouble) new GuiSliderDouble(
-                0, 0, 0, 16, state.radiusState, 4.0D, 64.0D, 1.0D).withPercentWidth(1.0F);
+        GuiSliderDouble radiusSlider = paramsCard.add(GuiSliderDouble.of(state.radiusState, 4.0D, 64.0D, 1.0D));
+        radiusSlider.withSize(0, 16);
         radiusSlider.bindState(state.radiusState, val -> {
             if (val != null) {
-                radiusLabel.setText("Combat Radius: " + Math.round(val) + "m");
+                radiusLabel.setText(formatCombatRadius(Math.round(val)));
                 if (!state.isApplyingSnapshot()) {
                     NBTTagCompound data = new NBTTagCompound();
                     data.setDouble("radius", val);
@@ -133,34 +113,33 @@ public final class TasksLogisticsTabView {
                 }
             }
         });
-        paramsCard.addChild(radiusSlider);
 
-        GuiButton completionBtn = new GuiButton(
-                0, 0, 120, 18,
-                "On Finish: " + state.getTaskConfig().getCompletionBehavior().getDisplayName(),
+        GuiButton completionBtn = paramsCard.add(GuiButton.of(
+                formatOnFinish(state.getTaskConfig().getCompletionBehavior().getDisplayName()),
                 () -> {
                     sendAction.accept("automata:cycle_completion", null);
                     refreshSnapshot.run();
-                }).withVariant(GuiButton.Variant.GHOST);
-        completionBtn.withPercentWidth(1.0F);
-        completionBtn.withTooltip("Behavior when Excavation, Lumberjack, or Courier finishes");
-        state.completionOrdinalState.addListener(ord -> {
+                }).withVariant(GuiButton.Variant.GHOST));
+        completionBtn.withSize(120, 18).withPercentWidth(1.0F)
+                .withTooltip(tr("gui.automata.tasks.on_finish_tip", "Behavior when Excavation, Lumberjack, or Courier finishes"));
+        completionBtn.bindState(state.completionOrdinalState, ord -> {
             TaskCompletionBehavior[] vals = TaskCompletionBehavior.values();
             if (ord != null && ord >= 0 && ord < vals.length) {
-                completionBtn.setText("On Finish: " + vals[ord].getDisplayName());
+                completionBtn.setText(formatOnFinish(vals[ord].getDisplayName()));
             }
         });
-        paramsCard.addChild(completionBtn);
-        root.addChild(paramsCard);
+        root.add(paramsCard);
 
-        GuiPanel logisticsCard = AutomataUiTheme.makeCard("Logistics Chests (Look at Chest)", 4);
-        this.sourceChestLabel = addChestRow(logisticsCard, "Source", "source", sendAction, refreshSnapshot);
-        this.depositChestLabel = addChestRow(logisticsCard, "Deposit", "deposit", sendAction, refreshSnapshot);
-        this.toolChestLabel = addChestRow(logisticsCard, "Tool", "tool", sendAction, refreshSnapshot);
-        this.foodChestLabel = addChestRow(logisticsCard, "Food", "food", sendAction, refreshSnapshot);
-        root.addChild(logisticsCard);
+        GuiPanel logisticsCard = AutomataUiTheme.makeCard(tr("gui.automata.tasks.logistics_chests", "Logistics Chests (Look at Chest)"), 4);
+        this.sourceChestLabel = addChestRow(logisticsCard, tr("gui.automata.tasks.source", "Source"), "source", sendAction, refreshSnapshot);
+        this.savingChestLabel = addChestRow(logisticsCard, tr("gui.automata.tasks.saving", "Saving"), "saving", sendAction, refreshSnapshot);
+        root.add(logisticsCard);
 
-        state.jobOrdinalState.addListener(this::refreshJobSelection);
+        jobsCard.bindState(state.jobOrdinalState, ord -> {
+            if (ord != null) {
+                refreshJobSelection(ord);
+            }
+        });
         state.addSnapshotListener(() -> syncFromState(state));
         refreshJobSelection(state.jobOrdinalState.get());
         syncFromState(state);
@@ -170,13 +149,13 @@ public final class TasksLogisticsTabView {
             JobDescriptor job,
             BiConsumer<String, NBTTagCompound> sendAction,
             Runnable refreshSnapshot) {
-        GuiButton btn = new GuiButton(0, 0, 80, 16, formatJobTitle(job), () -> {
+        GuiButton btn = GuiButton.of(formatJobTitle(job), () -> {
             NBTTagCompound data = new NBTTagCompound();
             data.setString("jobId", job.getId().toString());
             sendAction.accept("automata:set_job", data);
             refreshSnapshot.run();
         }).withVariant(GuiButton.Variant.GHOST);
-        btn.withPercentWidth(0.49F);
+        btn.withSize(0, 16).withPercentWidth(-1.0F).withFlex(1.0F, 1.0F);
         btn.withTooltip(translateOrRaw(job.getDescriptionKey()));
         jobButtons.add(btn);
         return btn;
@@ -188,34 +167,29 @@ public final class TasksLogisticsTabView {
             String key,
             BiConsumer<String, NBTTagCompound> sendAction,
             Runnable refreshSnapshot) {
-        GuiPanel row = GuiPanel.row(4);
-        row.setHugContent(true);
-        row.withPercentWidth(1.0F);
-        row.setAlignItems(FlexAlign.CENTER);
+        GuiPanel row = GuiPanel.row(4)
+                .withHugContent(true)
+                .withPercentWidth(1.0F)
+                .withAlignItems(FlexAlign.CENTER);
 
-        GuiLabel label = new GuiLabel(0, 0, title + ": Unset", AutomataUiTheme.COLOR_MUTED);
-        label.withPercentWidth(0.56F);
-        row.addChild(label);
+        GuiLabel label = row.add(GuiLabel.of(title + ": Unset", AutomataUiTheme.COLOR_MUTED));
+        label.withPercentWidth(-1.0F).withFlex(1.0F, 1.0F);
 
-        GuiButton setBtn = new GuiButton(0, 0, 50, 16, "Set Looked", () -> {
+        row.add(GuiButton.of(tr("gui.automata.tasks.set_looked", "Set Looked"), () -> {
             NBTTagCompound data = new NBTTagCompound();
             data.setString("chest", key);
             sendAction.accept("automata:set_chest", data);
             refreshSnapshot.run();
-        }).withVariant(GuiButton.Variant.PRIMARY);
-        setBtn.withPercentWidth(0.24F);
-        row.addChild(setBtn);
+        }).withVariant(GuiButton.Variant.PRIMARY), btn -> btn.withSize(62, 16));
 
-        GuiButton clearBtn = new GuiButton(0, 0, 32, 16, "Clr", () -> {
+        row.add(GuiButton.of(tr("gui.automata.tasks.clr", "Clr"), () -> {
             NBTTagCompound data = new NBTTagCompound();
             data.setString("chest", key);
             sendAction.accept("automata:clear_chest", data);
             refreshSnapshot.run();
-        }).withVariant(GuiButton.Variant.GHOST);
-        clearBtn.withPercentWidth(0.16F);
-        row.addChild(clearBtn);
+        }).withVariant(GuiButton.Variant.GHOST), btn -> btn.withSize(28, 16));
 
-        parent.addChild(row);
+        parent.add(row);
         return label;
     }
 
@@ -229,10 +203,26 @@ public final class TasksLogisticsTabView {
         AutomatonTaskConfig cfg = state.getTaskConfig();
         zoneSummaryLabel.setText("A: " + AutomataUiTheme.formatPos(cfg.getPos1())
                 + " | B: " + AutomataUiTheme.formatPos(cfg.getPos2()));
-        sourceChestLabel.setText("Source: " + AutomataUiTheme.formatPos(cfg.getSourceChest()));
-        depositChestLabel.setText("Deposit: " + AutomataUiTheme.formatPos(cfg.getDepositChest()));
-        toolChestLabel.setText("Tool: " + AutomataUiTheme.formatPos(cfg.getToolChest()));
-        foodChestLabel.setText("Food: " + AutomataUiTheme.formatPos(cfg.getFoodChest()));
+        sourceChestLabel.setText(tr("gui.automata.tasks.source", "Source") + ": " + AutomataUiTheme.formatPos(cfg.getSourceChest()));
+        savingChestLabel.setText(tr("gui.automata.tasks.saving", "Saving") + ": " + AutomataUiTheme.formatPos(cfg.getSavingChest()));
+    }
+
+    private static String formatCombatRadius(long meters) {
+        return net.minecraft.client.resources.I18n.hasKey("gui.automata.tasks.combat_radius")
+                ? net.minecraft.client.resources.I18n.format("gui.automata.tasks.combat_radius", meters)
+                : "Combat Radius: " + meters + "m";
+    }
+
+    private static String formatOnFinish(String behavior) {
+        return net.minecraft.client.resources.I18n.hasKey("gui.automata.tasks.on_finish")
+                ? net.minecraft.client.resources.I18n.format("gui.automata.tasks.on_finish", behavior)
+                : "On Finish: " + behavior;
+    }
+
+    private static String tr(String key, String fallback) {
+        return net.minecraft.client.resources.I18n.hasKey(key)
+                ? net.minecraft.client.resources.I18n.format(key)
+                : fallback;
     }
 
     public GuiScrollPanel getRoot() {

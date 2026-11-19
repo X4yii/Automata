@@ -23,11 +23,6 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import com.x4yi.automata.AutomataMod;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Expands {@code @at} (and {@code @at[...]}) across all server commands.
- * When multiple automata match in single-entity commands (like /effect or /kill),
- * fans out execution per matching automaton UUID so {@code matchOneEntity} never fails.
- */
 @Mod.EventBusSubscriber(modid = AutomataMod.MOD_ID)
 public final class AutomatonSelectorHandler {
 

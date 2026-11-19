@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
 
 package com.x4yi.automata.gui;
 
@@ -14,10 +10,6 @@ import net.minecraftforge.fml.common.network.IGuiHandler;
 
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Forge {@link IGuiHandler} for opening {@link ContainerAutomaton} and the client X4UI screen
- * without exposing client-only classes to dedicated servers.
- */
 public class AutomatonGuiHandler implements IGuiHandler {
 
     public static final int GUI_AUTOMATON = 1;

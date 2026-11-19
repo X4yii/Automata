@@ -11,9 +11,6 @@ import net.minecraftforge.fml.client.config.IConfigElement;
 
 import com.x4yi.automata.config.AutomataConfig;
 
-/**
- * Pure model wrapping Forge {@link IConfigElement} entries for the X4UI config screen.
- */
 public final class ConfigEntryModel {
 
     private final String category;

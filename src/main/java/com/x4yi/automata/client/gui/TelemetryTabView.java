@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 x4yi
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
 
 package com.x4yi.automata.client.gui;
 
@@ -17,9 +13,6 @@ import com.x4yi.automata.ai.AutomatonTaskConfig;
 import com.x4yi.automata.config.AutomataConfig;
 import com.x4yi.automata.entity.EntityAutomaton;
 
-/**
- * Debug-gated telemetry tab showing live pathfinding, chunk tickets, and state diagnostics.
- */
 @SideOnly(Side.CLIENT)
 public final class TelemetryTabView {
 
@@ -29,15 +22,12 @@ public final class TelemetryTabView {
     public TelemetryTabView(EntityAutomaton bot, AutomatonGuiState state, Runnable refreshSnapshot) {
         this.root = AutomataUiTheme.createTabScroll();
 
-        GuiPanel card = AutomataUiTheme.makeCard("Live Automaton Telemetry", 6);
-        this.markdown = (GuiMarkdown) new GuiMarkdown(0, 0, 260, "").withPercentWidth(1.0F);
-        card.addChild(markdown);
+        GuiPanel card = AutomataUiTheme.makeCard(tr("gui.automata.telemetry.title", "Live Automaton Telemetry"), 6);
+        this.markdown = card.add(new GuiMarkdown(0, 0, 260, ""), md -> md.withPercentWidth(1.0F));
 
-        GuiButton refreshBtn = new GuiButton(0, 0, 100, 16, "Refresh Snapshot", refreshSnapshot)
-                .withVariant(GuiButton.Variant.PRIMARY);
-        refreshBtn.withPercentWidth(1.0F);
-        card.addChild(refreshBtn);
-        root.addChild(card);
+        card.add(GuiButton.of(tr("gui.automata.telemetry.refresh", "Refresh Snapshot"), refreshSnapshot).withVariant(GuiButton.Variant.PRIMARY),
+                btn -> btn.withSize(100, 16).withPercentWidth(1.0F));
+        root.add(card);
 
         state.addSnapshotListener(() -> updateTelemetry(bot, state));
         updateTelemetry(bot, state);
@@ -61,6 +51,12 @@ public final class TelemetryTabView {
 
     public GuiScrollPanel getRoot() {
         return root;
+    }
+
+    private static String tr(String key, String fallback) {
+        return net.minecraft.client.resources.I18n.hasKey(key)
+                ? net.minecraft.client.resources.I18n.format(key)
+                : fallback;
     }
 }
 
