@@ -21,14 +21,15 @@ import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.api.JobDescriptor;
 import com.x4yi.automata.config.AutomataConfig;
 import com.x4yi.automata.entity.EntityAutomaton;
-import com.x4yi.automata.movement.HumanMovementController.MovementMood;
+import com.x4yi.automata.movement.MovementPace;
 import com.x4yi.automata.world.MiningProgressController;
 
 public class AutomatonBrain {
 
-    private static final int FAST_DECISION_INTERVAL_TICKS = 2;
-    private static final int STANDARD_DECISION_INTERVAL_TICKS = 3;
+    private static final int FAST_DECISION_INTERVAL_TICKS = 4;
+    private static final int STANDARD_DECISION_INTERVAL_TICKS = 6;
     private static final int INVENTORY_MANAGE_INTERVAL_TICKS = 20;
+    private static final long SQUAD_SUPPLY_SCAN_INTERVAL_TICKS = 6L;
     private static final int BLACKBOARD_PRUNE_INTERVAL = 100;
     private static final double MINING_REACH_SQ = 20.25D;
     private static final int OVERRIDE_FAILURE_THRESHOLD = 3;
@@ -43,9 +44,11 @@ public class AutomatonBrain {
     private BrainBehavior activeBehavior = BrainBehavior.ACTIVE_JOB;
     private int decisionCooldownTicks;
     private float cachedOccupancy = -1.0F;
+    private long lastSquadSupplyScanTick = Long.MIN_VALUE;
 
     public AutomatonBrain(EntityAutomaton automaton) {
         this.context = new AutomatonAIContext(automaton);
+        this.decisionCooldownTicks = Math.abs(automaton.getEntityId()) % FAST_DECISION_INTERVAL_TICKS;
         for (JobDescriptor descriptor : AutomataAPI.getAllJobs()) {
             jobs.put(descriptor.getId(), descriptor.createJob());
         }
@@ -62,15 +65,21 @@ public class AutomatonBrain {
 
     public int computeDecisionIntervalTicks() {
         JobDescriptor descriptor = AutomataAPI.getJob(activeJobId);
+        int base;
         if (descriptor != null && descriptor.getDecisionIntervalTicks() > 0) {
-            return descriptor.getDecisionIntervalTicks();
-        }
-        if (isCombatJob(activeJobId)
+            base = descriptor.getDecisionIntervalTicks();
+        } else if (isCombatJob(activeJobId)
                 || context.isUrgentMovement()
-                || context.getMiningController().isMining()) {
-            return FAST_DECISION_INTERVAL_TICKS;
+                || context.getMiningController().isMining()
+                || context.getMovement().isActionLookLocked()) {
+            base = FAST_DECISION_INTERVAL_TICKS;
+        } else {
+            base = STANDARD_DECISION_INTERVAL_TICKS;
         }
-        return STANDARD_DECISION_INTERVAL_TICKS;
+        double mspt = context.getAutomaton().world != null
+                ? BudgetedTickScheduler.getServerMspt(context.getAutomaton().world.getMinecraftServer())
+                : 0.0D;
+        return BudgetedTickScheduler.scaleInterval(base, mspt);
     }
 
     private boolean isCombatJob(ResourceLocation jobId) {
@@ -105,6 +114,8 @@ public class AutomatonBrain {
     }
 
     public void tickServer() {
+        long benchBrainStart = com.x4yi.automata.bench.InGameBenchmarkProfiler.isActive() ? System.nanoTime() : 0L;
+        try {
         EntityAutomaton bot = context.getAutomaton();
         if (bot.isDowned()) {
             bot.getChunkLoader().releaseAll();
@@ -139,40 +150,73 @@ public class AutomatonBrain {
             cachedOccupancy = computeInventoryOccupancy(bot);
         }
 
+        long benchSurvivalStart = benchBrainStart != 0L ? System.nanoTime() : 0L;
+        TacticalUtilityController.tickWaterDropClutch20Hz(context);
+        com.x4yi.automata.ai.jobs.VengeanceBookController.tickAirClutch20Hz(context);
         TacticalUtilityController.tryEmergencyPearlRescue(context);
         TacticalUtilityController.tryDrinkConsumable(context);
         if (SurvivalEvaluator.tickVoidRescue20Hz(context)) {
+            if (benchSurvivalStart != 0L) {
+                com.x4yi.automata.bench.InGameBenchmarkProfiler.record(
+                        com.x4yi.automata.bench.InGameBenchmarkProfiler.Phase.BRAIN_SURVIVAL,
+                        System.nanoTime() - benchSurvivalStart);
+            }
             return;
         }
         SurvivalEvaluator.tickLavaEscape20Hz(context);
+        boolean dodgingWave = com.x4yi.automata.ai.jobs.WavePredictionDodgeController.tickWaveAndAoeDodge20Hz(context);
 
-        boolean immediateHazard = SurvivalEvaluator.isImmediateHazard(bot);
-        if (immediateHazard) {
+        boolean immediateHazard = SurvivalEvaluator.isImmediateHazard(context);
+        int activeTargetId = context.getCombatTacticsState().activeTargetId;
+        boolean targetLost = activeTargetId >= 0
+                && !isEntityAliveById(bot.world, activeTargetId);
+        boolean freshNonCombatHit = !isCombatJob(activeJobId)
+                && bot.hurtTime > 0
+                && bot.hurtTime == bot.maxHurtTime;
+        if (immediateHazard || targetLost || freshNonCombatHit) {
             decisionCooldownTicks = 0;
+        }
+        if (benchSurvivalStart != 0L) {
+            com.x4yi.automata.bench.InGameBenchmarkProfiler.record(
+                    com.x4yi.automata.bench.InGameBenchmarkProfiler.Phase.BRAIN_SURVIVAL,
+                    System.nanoTime() - benchSurvivalStart);
         }
 
         boolean ranDecisionThisTick = false;
-        if (--decisionCooldownTicks <= 0) {
+        long benchDecisionStart = benchBrainStart != 0L ? System.nanoTime() : 0L;
+        if (!dodgingWave && --decisionCooldownTicks <= 0) {
             ranDecisionThisTick = true;
+            syncDesiredJob(bot);
             decisionCooldownTicks = computeDecisionIntervalTicks();
             IAutomatonJob activeJob = jobs.get(activeJobId);
+            boolean combatWithTargets = isCombatJob(activeJobId) && hasCombatTargetsInRange(bot);
             boolean committedWork = (activeJob != null && activeJob.hasCommittedWork(context))
+                    || combatWithTargets
                     || context.getMiningController().isMining();
             float occupancy = cachedOccupancy;
-            boolean lowHealthOrWither = bot.getHealth() / Math.max(1.0F, bot.getMaxHealth()) < 0.35F
-                    || bot.isPotionActive(net.minecraft.init.MobEffects.WITHER);
+            boolean lowHealthOrWither = SurvivalEvaluator.hasActionableLowHealthSurvival(context);
             boolean activeRangedCombat = isCombatJob(activeJobId) && hasActiveRangedEngagement(bot);
+            boolean hasUnclaimedDowned = context.getBlackboard().findNearestDowned(entityId, bot.getPosition(), worldTime) != null;
+            boolean isDesignatedMedic = context.getRevivingTargetId() >= 0;
+            boolean suppressReviveForRanged = activeRangedCombat && !hasUnclaimedDowned && !isDesignatedMedic;
+            boolean allyNeedsRevive = !suppressReviveForRanged
+                    && context.getTaskConfig().isSquadCooperation()
+                    && (hasUnclaimedDowned || isDesignatedMedic);
+            boolean reactiveThreat = !isCombatJob(activeJobId)
+                    && bot.getRevengeTarget() != null
+                    && bot.getRevengeTarget().isEntityAlive();
+            boolean ownerFar = isOwnerFarAway(bot, 256.0D);
             UtilityState utilityState = UtilityState.builder()
                     .inHazardOrExplosive(immediateHazard)
                     .lowHealthNeedsSurvival(lowHealthOrWither)
-                    .allyNeedsRevive(!activeRangedCombat
-                            && context.getTaskConfig().isSquadCooperation()
-                            && context.getBlackboard().findNearestDowned(entityId, bot.getPosition(), worldTime) != null)
-                    .hasThreatOrRevenge(bot.getRevengeTarget() != null && bot.getRevengeTarget().isEntityAlive())
+                    .allyNeedsRevive(allyNeedsRevive)
+                    .hasThreatOrRevenge(reactiveThreat)
                     .safeLootAvailable(!activeRangedCombat
+                            && !combatWithTargets
+                            && !ownerFar
                             && context.getTaskConfig().isCanPickUpLoot()
                             && context.getTaskConfig().isSearchLoot())
-                    .logisticsReady(context.getTaskConfig().getDepositChest() != null && occupancy >= 0.85F)
+                    .logisticsReady(LogisticsService.needsLogistics(context))
                     .inventoryOccupancy(occupancy)
                     .hasActiveCommittedJob(committedWork)
                     .build();
@@ -185,30 +229,43 @@ public class AutomatonBrain {
             if (!overridden) {
                 recordOverrideFailure(selected, worldTime);
                 activeBehavior = BrainBehavior.ACTIVE_JOB;
-                ResourceLocation desired = context.getTaskConfig().getJobId();
-                if (!jobs.containsKey(desired)) {
-                    desired = AutomatonBuiltInJobs.IDLE;
-                }
-                if (!desired.equals(activeJobId)) {
-                    CombatJobSupport.cancelBowDraw(bot);
-                    bot.clearNeededTool();
-                    IAutomatonJob previous = jobs.get(activeJobId);
-                    if (previous != null) {
-                        previous.onStop((IAutomatonContext) context);
+                boolean ownerTooFarForSupply = isOwnerFarAway(bot, 256.0D);
+                boolean canCooperate = !combatWithTargets
+                        && !immediateHazard
+                        && !ownerTooFarForSupply
+                        && context.getTaskConfig().isSquadCooperation();
+                boolean handlingExchange = canCooperate && SquadSupplyService.tickActiveExchange(context);
+                if (!handlingExchange) {
+                    IAutomatonJob current = jobs.get(activeJobId);
+                    if (current != null) {
+                        current.tick((IAutomatonContext) context);
                     }
-                    context.resetMining();
-                    bot.getChunkLoader().setExtraWorkChunk(null);
-                    activeJobId = desired;
-                }
-                IAutomatonJob current = jobs.get(activeJobId);
-                if (current != null) {
-                    current.tick((IAutomatonContext) context);
+                    if (canCooperate && worldTime - lastSquadSupplyScanTick >= SQUAD_SUPPLY_SCAN_INTERVAL_TICKS) {
+                        lastSquadSupplyScanTick = worldTime;
+                        SquadSupplyService.tickSquadSupply(context);
+                    }
                 }
             } else {
                 overrideFailures[selected.ordinal()] = 0;
                 activeBehavior = selected;
-                CombatJobSupport.cancelBowDraw(bot);
+                if (context.getCombatTacticsState().lastEngagedTick != worldTime) {
+                    CombatJobSupport.cancelBowDraw(bot);
+                }
             }
+        }
+        if (benchDecisionStart != 0L && ranDecisionThisTick) {
+            com.x4yi.automata.bench.InGameBenchmarkProfiler.record(
+                    com.x4yi.automata.bench.InGameBenchmarkProfiler.Phase.BRAIN_DECISION_AND_JOB,
+                    System.nanoTime() - benchDecisionStart);
+        }
+
+        if (!dodgingWave
+                && !ranDecisionThisTick
+                && activeBehavior == BrainBehavior.ACTIVE_JOB
+                && !immediateHazard
+                && context.getTaskConfig().isSquadCooperation()
+                && !(isCombatJob(activeJobId) && hasCombatTargetsInRange(bot))) {
+            SquadSupplyService.tickActiveExchange(context);
         }
 
         BlockPos activeMiningPos = context.getMiningController().getActivePos();
@@ -221,6 +278,7 @@ public class AutomatonBrain {
                 if (!MiningProgressController.shouldDeferMiningInAir(bot.onGround, bot.isInWater(), bot.isOnLadder())
                         && context.getMiningController().stepBreakBlock(context.getWorld(), bot, activeMiningPos)) {
                     context.getBlackboard().releaseBlock(entityId, activeMiningPos);
+                    decisionCooldownTicks = 0;
                 }
             } else {
                 context.resetMining();
@@ -229,51 +287,128 @@ public class AutomatonBrain {
 
         if ((bot.onGround || bot.isInWater())
                 && !bot.isSneaking()
-                && !bot.isOnLadder()
-                && AutomataConfig.allySeparationGap > 0.0D) {
+                && !bot.isOnLadder()) {
+            boolean isBuilding = context.getBlackboard().isBuilderClaiming(entityId, worldTime);
             double[] sep = separationScratch;
-            context.computeAllySeparation(AutomataConfig.allySeparationGap, sep);
-            if (sep[0] != 0.0D || sep[1] != 0.0D) {
+            if (!isBuilding && context.getBlackboard().computeYieldVector(
+                    entityId, bot.posX, bot.posY, bot.posZ, 7.84D, worldTime, sep)) {
                 double mag = Math.sqrt(sep[0] * sep[0] + sep[1] * sep[1]);
-                double push = Math.min(0.055D, 0.035D * mag);
-                bot.motionX += (sep[0] / mag) * push;
-                bot.motionZ += (sep[1] / mag) * push;
+                if (mag > 1e-4D) {
+                    double push = 0.065D;
+                    bot.motionX += (sep[0] / mag) * push;
+                    bot.motionZ += (sep[1] / mag) * push;
+                }
+            } else if (!isBuilding && AutomataConfig.allySeparationGap > 0.0D) {
+                context.computeAllySeparation(AutomataConfig.allySeparationGap, sep);
+                if (sep[0] != 0.0D || sep[1] != 0.0D) {
+                    double mag = Math.sqrt(sep[0] * sep[0] + sep[1] * sep[1]);
+                    double push = Math.min(0.055D, 0.035D * mag);
+                    bot.motionX += (sep[0] / mag) * push;
+                    bot.motionZ += (sep[1] / mag) * push;
+                }
             }
         }
 
+        boolean survivalLockout = dodgingWave
+                || immediateHazard
+                || activeBehavior == BrainBehavior.SURVIVAL
+                || context.getRevivingTargetId() >= 0;
         boolean combatBehaviorActive = activeBehavior == BrainBehavior.ACTIVE_JOB
-                || activeBehavior == BrainBehavior.SELF_DEFENSE;
-        if (bot.isEating()
-                || bot.getRevengeTarget() != null
-                || (combatBehaviorActive && isCombatJob(activeJobId))) {
-            CombatJobSupport.tickActiveCombat20Hz(context, AutomatonBuiltInJobs.CRAZY_DEFEND.equals(activeJobId));
+                || activeBehavior == BrainBehavior.SELF_DEFENSE
+                || (worldTime - context.getCombatTacticsState().lastEngagedTick <= 10L);
+        if (!survivalLockout
+                && (bot.isEating()
+                        || bot.getRevengeTarget() != null
+                        || (combatBehaviorActive && (isCombatJob(activeJobId) || context.getCombatTacticsState().activeTargetId >= 0)))) {
+            long benchCombatStart = benchBrainStart != 0L ? System.nanoTime() : 0L;
+            CombatJobSupport.tickActiveCombat20Hz(context, AutomatonBuiltInJobs.AGGRESSIVE_GUARD.equals(activeJobId));
+            if (benchCombatStart != 0L) {
+                com.x4yi.automata.bench.InGameBenchmarkProfiler.record(
+                        com.x4yi.automata.bench.InGameBenchmarkProfiler.Phase.BRAIN_COMBAT_20HZ,
+                        System.nanoTime() - benchCombatStart);
+            }
         }
 
         JobDescriptor activeDescriptor = AutomataAPI.getJob(activeJobId);
-        MovementMood descriptorMood = activeDescriptor == null ? MovementMood.CHILL : activeDescriptor.getMovementMood();
-        boolean tryhard = context.isUrgentMovement()
+        MovementPace descriptorPace = activeDescriptor == null ? MovementPace.NORMAL : activeDescriptor.getMovementPace();
+        boolean fastPace = context.isUrgentMovement()
                 || bot.getRevengeTarget() != null
                 || bot.isEating()
-                || descriptorMood == MovementMood.TRYHARD;
-        context.getMovement().setMood(tryhard ? MovementMood.TRYHARD : MovementMood.CHILL);
+                || descriptorPace == MovementPace.FAST;
+        long benchMoveStart = benchBrainStart != 0L ? System.nanoTime() : 0L;
+        context.getMovement().setPace(fastPace ? MovementPace.FAST : MovementPace.NORMAL);
         context.getMovement().tick(context.isUrgentMovement());
+        if (benchMoveStart != 0L) {
+            com.x4yi.automata.bench.InGameBenchmarkProfiler.record(
+                    com.x4yi.automata.bench.InGameBenchmarkProfiler.Phase.BRAIN_MOVEMENT_20HZ,
+                    System.nanoTime() - benchMoveStart);
+        }
+        } finally {
+            if (benchBrainStart != 0L) {
+                com.x4yi.automata.bench.InGameBenchmarkProfiler.record(
+                        com.x4yi.automata.bench.InGameBenchmarkProfiler.Phase.BRAIN_TOTAL,
+                        System.nanoTime() - benchBrainStart);
+            }
+        }
+    }
+
+    private static boolean isEntityAliveById(net.minecraft.world.World world, int entityId) {
+        net.minecraft.entity.Entity target = world.getEntityByID(entityId);
+        return target != null && target.isEntityAlive();
+    }
+
+    private boolean isOwnerFarAway(EntityAutomaton bot, double thresholdSq) {
+        if (bot.getOwnerUuid() == null) {
+            return false;
+        }
+        net.minecraft.entity.player.EntityPlayer owner = context.getWorld().getPlayerEntityByUUID(bot.getOwnerUuid());
+        return owner != null && bot.getDistanceSq(owner) > thresholdSq;
+    }
+
+    private void syncDesiredJob(EntityAutomaton bot) {
+        ResourceLocation desired = context.getTaskConfig().getJobId();
+        if (!jobs.containsKey(desired)) {
+            desired = AutomatonBuiltInJobs.IDLE;
+        }
+        if (!desired.equals(activeJobId)) {
+            CombatJobSupport.cancelBowDraw(bot);
+            bot.clearNeededTool();
+            IAutomatonJob previous = jobs.get(activeJobId);
+            if (previous != null) {
+                previous.onStop((IAutomatonContext) context);
+            }
+            context.resetMining();
+            bot.getChunkLoader().setExtraWorkChunk(null);
+            activeJobId = desired;
+        }
+    }
+
+    private boolean hasCombatTargetsInRange(EntityAutomaton bot) {
+        if (bot.getRevengeTarget() != null && bot.getRevengeTarget().isEntityAlive()) {
+            return true;
+        }
+        double radius = Math.max(16.0D, context.getTaskConfig().getCombatRadius());
+        return CombatJobSupport.findNearestTarget(context, bot.getPosition(), radius, e -> true) != null;
     }
 
     private boolean hasActiveRangedEngagement(EntityAutomaton bot) {
-        net.minecraft.item.ItemStack held = bot.getHeldItemMainhand();
-        boolean ranged = EquipmentSelector.isBowItem(held)
-                || com.x4yi.automata.ai.jobs.WeaponCombatProfile.resolve(held).isRangedSkirmishStyle();
-        if (!ranged) {
+        if (!com.x4yi.automata.ai.jobs.RangedCombatController.hasReadyRangedWeapon(bot)) {
             return false;
+        }
+        if (bot.getRevengeTarget() != null && bot.getRevengeTarget().isEntityAlive()) {
+            return true;
         }
         int targetId = context.getCombatTacticsState().activeTargetId;
-        if (targetId < 0) {
-            return false;
+        if (targetId >= 0) {
+            net.minecraft.entity.Entity target = context.getWorld().getEntityByID(targetId);
+            if (target instanceof net.minecraft.entity.EntityLivingBase living
+                    && living.isEntityAlive()
+                    && bot.canEntityBeSeen(living)) {
+                return true;
+            }
         }
-        net.minecraft.entity.Entity target = context.getWorld().getEntityByID(targetId);
-        return target instanceof net.minecraft.entity.EntityLivingBase living
-                && living.isEntityAlive()
-                && bot.canEntityBeSeen(living);
+        double radius = Math.max(24.0D, context.getTaskConfig().getCombatRadius());
+        return CombatJobSupport.findNearestTarget(context, bot.getPosition(), radius, e -> true) != null;
     }
 
     boolean isOverrideOnBackoff(BrainBehavior behavior, long now) {
@@ -319,13 +454,13 @@ public class AutomatonBrain {
     }
 
     private boolean executeSelectedOverride(BrainBehavior selected, EntityAutomaton bot) {
-        if (SurvivalEvaluator.handleSurvival(context)) {
+        if (SurvivalEvaluator.handleImmediateSelfSurvival(context)) {
             return true;
         }
         return switch (selected) {
-            case SURVIVAL -> false;
-            case SELF_DEFENSE -> handleReactiveSelfDefense(bot)
-                    || InventoryManagerService.trySeekNearbyUsefulDrop(context);
+            case SURVIVAL -> SurvivalEvaluator.handleLowHealthSurvival(context)
+                    || SurvivalEvaluator.handleSquadRevive(context);
+            case SELF_DEFENSE -> handleReactiveSelfDefense(bot);
             case LOGISTICS -> LogisticsService.handleLogistics(context);
             case SEEK_LOOT -> InventoryManagerService.trySeekNearbyUsefulDrop(context);
             case ACTIVE_JOB -> false;

@@ -29,10 +29,6 @@ public class AutomatonTaskConfig {
     private BlockPos sourceChest;
     @Nullable
     private BlockPos depositChest;
-    @Nullable
-    private BlockPos toolChest;
-    @Nullable
-    private BlockPos foodChest;
 
     private String squadChannel = "";
     private double combatRadius = 16.0D;
@@ -126,21 +122,12 @@ public class AutomatonTaskConfig {
     }
 
     @Nullable
-    public BlockPos getToolChest() {
-        return toolChest;
+    public BlockPos getSavingChest() {
+        return depositChest;
     }
 
-    public void setToolChest(@Nullable BlockPos toolChest) {
-        this.toolChest = toolChest == null ? null : toolChest.toImmutable();
-    }
-
-    @Nullable
-    public BlockPos getFoodChest() {
-        return foodChest;
-    }
-
-    public void setFoodChest(@Nullable BlockPos foodChest) {
-        this.foodChest = foodChest == null ? null : foodChest.toImmutable();
+    public void setSavingChest(@Nullable BlockPos savingChest) {
+        setDepositChest(savingChest);
     }
 
     public String getSquadChannel() {
@@ -241,9 +228,8 @@ public class AutomatonTaskConfig {
         writePos(tag, "Pos1", pos1);
         writePos(tag, "Pos2", pos2);
         writePos(tag, "SourceChest", sourceChest);
+        writePos(tag, "SavingChest", depositChest);
         writePos(tag, "DepositChest", depositChest);
-        writePos(tag, "ToolChest", toolChest);
-        writePos(tag, "FoodChest", foodChest);
         tag.setString("SquadChannel", squadChannel);
         tag.setDouble("CombatRadius", combatRadius);
         tag.setBoolean("WhitelistMode", whitelistMode);
@@ -269,7 +255,11 @@ public class AutomatonTaskConfig {
     public void deserializeNBT(NBTTagCompound tag) {
         if (tag.hasKey("JobType")) {
             String rawJob = tag.getString("JobType");
-            if (rawJob.contains(":")) {
+            if ("automata:defend".equals(rawJob) || "defend".equals(rawJob)) {
+                setJobId(AutomatonBuiltInJobs.GUARD);
+            } else if ("automata:crazy_defend".equals(rawJob) || "crazy_defend".equals(rawJob)) {
+                setJobId(AutomatonBuiltInJobs.AGGRESSIVE_GUARD);
+            } else if (rawJob.contains(":")) {
                 setJobId(new ResourceLocation(rawJob));
             } else {
                 setJobId(new ResourceLocation("automata", rawJob));
@@ -278,9 +268,9 @@ public class AutomatonTaskConfig {
         pos1 = readPos(tag, "Pos1");
         pos2 = readPos(tag, "Pos2");
         sourceChest = readPos(tag, "SourceChest");
-        depositChest = readPos(tag, "DepositChest");
-        toolChest = readPos(tag, "ToolChest");
-        foodChest = readPos(tag, "FoodChest");
+        depositChest = tag.hasKey("SavingChest", Constants.NBT.TAG_LONG)
+                ? readPos(tag, "SavingChest")
+                : readPos(tag, "DepositChest");
         if (tag.hasKey("SquadChannel")) {
             setSquadChannel(tag.getString("SquadChannel"));
         }

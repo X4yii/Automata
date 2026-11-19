@@ -37,6 +37,7 @@ public final class SurvivalEvaluator {
     private static final int COVER_SCAN_RADIUS = 10;
     private static final int LAVA_ESCAPE_SCAN_RADIUS = 10;
     private static final double REVIVE_RANGE_SQ = 6.25D;
+    private static final double REVIVE_MAINTAIN_RANGE_SQ = 12.25D;
     private static final double REVIVE_SCAN_RADIUS = 24.0D;
     private static final long REVIVE_CHANNEL_TICKS = 40L;
     private static final double REVIVER_GUARD_SCAN_RADIUS = 16.0D;
@@ -50,6 +51,57 @@ public final class SurvivalEvaluator {
                 || bot.isBurning()
                 || bot.posY < 0.0D
                 || (bot.isInWater() && bot.getAir() < LOW_AIR_THRESHOLD);
+    }
+
+    public static boolean isImmediateHazard(AutomatonAIContext ctx) {
+        return isImmediateHazard(ctx.getAutomaton()) || ctx.hasCachedExplosiveHazard(DANGER_SCAN_RADIUS);
+    }
+
+    public static boolean hasActionableLowHealthSurvival(AutomatonAIContext ctx) {
+        EntityAutomaton bot = ctx.getAutomaton();
+        if (bot.getHealthRatio() >= 0.35F && !bot.isPotionActive(net.minecraft.init.MobEffects.WITHER)) {
+            return false;
+        }
+        if (EquipmentSelector.findHealingOrCureConsumableSlot(
+                bot,
+                bot.getHealthRatio() < 0.55F,
+                bot.isPotionActive(net.minecraft.init.MobEffects.WITHER)) >= 0) {
+            return true;
+        }
+        return com.x4yi.automata.ai.jobs.ThreatFieldEvaluator.assessLocalThreats(ctx, bot).enemyCount() > 0
+                || bot.getRevengeTarget() != null;
+    }
+
+    public static boolean handleLowHealthSurvival(AutomatonAIContext ctx) {
+        EntityAutomaton bot = ctx.getAutomaton();
+        if (bot.getHealthRatio() >= 0.35F && !bot.isPotionActive(net.minecraft.init.MobEffects.WITHER)) {
+            return false;
+        }
+        if (com.x4yi.automata.ai.jobs.TacticalUtilityController.tryDrinkConsumable(ctx)) {
+            return true;
+        }
+        com.x4yi.automata.ai.jobs.ThreatFieldEvaluator.ThreatAssessment threats =
+                com.x4yi.automata.ai.jobs.ThreatFieldEvaluator.assessLocalThreats(ctx, bot);
+        if (threats.enemyCount() > 0 && threats.hasEscapeVector()) {
+            BlockPos escape = com.x4yi.automata.ai.jobs.ThreatFieldEvaluator.findEscapeAnchor(ctx, bot, threats, 11.0D);
+            if (escape != null) {
+                ctx.requestPathTo(escape, true);
+                return true;
+            }
+            ctx.stopNavigation();
+            ctx.getMovement().moveDirectlyToward(
+                    bot.posX + threats.escapeX() * 4.0D,
+                    bot.posZ + threats.escapeZ() * 4.0D,
+                    1.20F,
+                    true);
+            return true;
+        }
+        EntityLivingBase revenge = bot.getRevengeTarget();
+        if (revenge != null && revenge.isEntityAlive()) {
+            fleeFrom(ctx, revenge.getPositionVector());
+            return true;
+        }
+        return false;
     }
 
     public static boolean tickVoidRescue20Hz(AutomatonAIContext ctx) {
@@ -127,6 +179,10 @@ public final class SurvivalEvaluator {
     }
 
     public static boolean handleSurvival(AutomatonAIContext ctx) {
+        return handleImmediateSelfSurvival(ctx) || handleSquadRevive(ctx);
+    }
+
+    public static boolean handleImmediateSelfSurvival(AutomatonAIContext ctx) {
         EntityAutomaton bot = ctx.getAutomaton();
         if (bot.posY < 0.0D) {
             ctx.resetReviveChannel();
@@ -149,10 +205,56 @@ public final class SurvivalEvaluator {
             fleeFrom(ctx, explosive.getPositionVector());
             return true;
         }
+        return false;
+    }
 
+    public static boolean handleSquadRevive(AutomatonAIContext ctx) {
+        EntityAutomaton bot = ctx.getAutomaton();
         long now = ctx.getWorldTime();
         SquadBlackboard board = ctx.getBlackboard();
         boolean coop = ctx.getTaskConfig().isSquadCooperation();
+        EntityAutomaton downedBot = findNearestRevivableAlly(ctx, bot, board, coop, now);
+        if (downedBot != null) {
+            double distSq = bot.getDistanceSq(downedBot);
+            if (coop && !board.tryClaimReviveDuty(bot.getEntityId(), downedBot.getEntityId(), bot.getPosition(), distSq, now)) {
+                ctx.resetReviveChannel();
+                return false;
+            }
+            boolean alreadyChanneling = ctx.getRevivingTargetId() == downedBot.getEntityId();
+            double activeRangeSq = alreadyChanneling ? REVIVE_MAINTAIN_RANGE_SQ : REVIVE_RANGE_SQ;
+            if (distSq <= activeRangeSq) {
+                if (bot.getHealthRatio() < 0.25F) {
+                    EntityLivingBase perimeterThreat = findImmediatePerimeterThreat(ctx, bot, downedBot);
+                    if (perimeterThreat != null) {
+                        board.clearReviveInProgress(bot.getEntityId());
+                        ctx.resetReviveChannel();
+                        CombatJobSupport.engageTarget(ctx, perimeterThreat, true);
+                        return true;
+                    }
+                }
+                ctx.stopNavigation();
+                ctx.getMovement().lookSmoothlyAt(downedBot.posX, downedBot.posY + 0.35D, downedBot.posZ);
+                bot.swingArm(EnumHand.MAIN_HAND);
+                board.reportReviveInProgress(bot.getEntityId(), downedBot.getEntityId(), bot.getPosition(), distSq, now);
+                if (ctx.advanceReviveChannel(downedBot.getEntityId()) >= REVIVE_CHANNEL_TICKS) {
+                    downedBot.revive(0.4F);
+                    downedBot.world.setEntityState(downedBot, (byte) 7);
+                    board.clearDowned(downedBot.getEntityId());
+                    board.clearReviveInProgress(bot.getEntityId());
+                    ctx.resetReviveChannel();
+                }
+            } else {
+                ctx.resetReviveChannel();
+                if (ctx.isGoalOnCooldown(downedBot.getPosition(), now)) {
+                    board.clearReviveInProgress(bot.getEntityId());
+                    return false;
+                }
+                ctx.requestPathTo(downedBot.getPosition(), true);
+            }
+            return true;
+        }
+        board.clearReviveInProgress(bot.getEntityId());
+
         if (coop) {
             SquadBlackboard.ReviveAlert activeRevive = board.findActiveReviverForSquad(bot.getEntityId(), now);
             if (activeRevive != null) {
@@ -166,40 +268,6 @@ public final class SurvivalEvaluator {
             }
         }
 
-        EntityAutomaton downedBot = findNearestRevivableAlly(ctx, bot, board, coop, now);
-        if (downedBot != null) {
-            if (coop && board.isDownedBeingRevivedByOther(bot.getEntityId(), downedBot.getEntityId(), now)) {
-                ctx.resetReviveChannel();
-                return false;
-            }
-            if (bot.getDistanceSq(downedBot) <= REVIVE_RANGE_SQ) {
-                EntityLivingBase perimeterThreat = findImmediatePerimeterThreat(ctx, bot, downedBot);
-                if (perimeterThreat != null) {
-                    board.clearReviveInProgress(bot.getEntityId());
-                    ctx.resetReviveChannel();
-                    CombatJobSupport.engageTarget(ctx, perimeterThreat, true);
-                    return true;
-                }
-                ctx.stopNavigation();
-                ctx.getMovement().lookSmoothlyAt(downedBot.posX, downedBot.posY + 0.35D, downedBot.posZ);
-                bot.swingArm(EnumHand.MAIN_HAND);
-                board.reportReviveInProgress(bot.getEntityId(), downedBot.getEntityId(), bot.getPosition(), now);
-                if (ctx.advanceReviveChannel(downedBot.getEntityId()) >= REVIVE_CHANNEL_TICKS) {
-                    downedBot.revive(0.4F);
-                    downedBot.world.setEntityState(downedBot, (byte) 7);
-                    board.clearDowned(downedBot.getEntityId());
-                    board.clearReviveInProgress(bot.getEntityId());
-                    ctx.resetReviveChannel();
-                }
-            } else {
-                board.clearReviveInProgress(bot.getEntityId());
-                ctx.resetReviveChannel();
-                ctx.requestPathTo(downedBot.getPosition(), true);
-            }
-            return true;
-        }
-        board.clearReviveInProgress(bot.getEntityId());
-
         ctx.resetReviveChannel();
         return false;
     }
@@ -211,7 +279,7 @@ public final class SurvivalEvaluator {
             boolean coop,
             long now) {
         if (coop) {
-            Map.Entry<Integer, BlockPos> downed = board.findNearestDowned(bot.getEntityId(), bot.getPosition());
+            Map.Entry<Integer, BlockPos> downed = board.findNearestDowned(bot.getEntityId(), bot.getPosition(), now);
             if (downed != null) {
                 Entity ally = ctx.getWorld().getEntityByID(downed.getKey());
                 if (ally instanceof EntityAutomaton downedBot && downedBot.isDowned()) {
@@ -231,7 +299,7 @@ public final class SurvivalEvaluator {
                     || !candidate.isDowned()) {
                 continue;
             }
-            if (bot.getOwnerUuid() != null && !bot.getOwnerUuid().equals(candidate.getOwnerUuid())) {
+            if (!bot.isAlliedWith(candidate)) {
                 continue;
             }
             if (coop && board.isDownedBeingRevivedByOther(bot.getEntityId(), candidate.getEntityId(), now)) {
@@ -263,11 +331,21 @@ public final class SurvivalEvaluator {
         }
         if (nearestThreat != null) {
             CombatJobSupport.engageTarget(ctx, nearestThreat, true);
-        } else if (defender.getDistanceSq(reviver) > REVIVER_GUARD_RANGE_SQ) {
-            ctx.requestPathTo(reviver.getPosition(), true);
         } else {
-            ctx.stopNavigation();
+            EntityLivingBase areaThreat = CombatJobSupport.findNearestTarget(
+                    ctx, defender.getPosition(), 24.0D, candidate -> candidate != reviver);
+            if (areaThreat != null) {
+                CombatJobSupport.engageTarget(ctx, areaThreat, true);
+            } else if (defender.getDistanceSq(reviver) > REVIVER_GUARD_RANGE_SQ) {
+                ctx.requestPathTo(reviver.getPosition(), true);
+            } else {
+                ctx.stopNavigation();
+            }
         }
+    }
+
+    private static boolean isUsingRangedWeapon(EntityAutomaton bot) {
+        return com.x4yi.automata.ai.jobs.RangedCombatController.hasReadyRangedWeapon(bot);
     }
 
     private static Entity findImminentExplosive(EntityAutomaton bot) {
@@ -278,6 +356,9 @@ public final class SurvivalEvaluator {
         EntityAutomaton bot = ctx.getAutomaton();
         if (!bot.isInLava()) {
             return;
+        }
+        if (bot.isEating()) {
+            bot.cancelEating();
         }
         WorldServer world = ctx.getWorld();
         BlockPos feet = bot.getPosition();
@@ -489,7 +570,8 @@ public final class SurvivalEvaluator {
             AutomatonAIContext ctx,
             EntityAutomaton bot,
             EntityAutomaton downedBot) {
-        AxisAlignedBB box = downedBot.getEntityBoundingBox().grow(4.5D, 2.5D, 4.5D);
+        double scanRadius = isUsingRangedWeapon(bot) ? 16.0D : 4.5D;
+        AxisAlignedBB box = downedBot.getEntityBoundingBox().grow(scanRadius, 3.5D, scanRadius);
         EntityLivingBase nearest = null;
         double bestDistSq = Double.MAX_VALUE;
         for (EntityLivingBase candidate : bot.world.getEntitiesWithinAABB(EntityLivingBase.class, box)) {

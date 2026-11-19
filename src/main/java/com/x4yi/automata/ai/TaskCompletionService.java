@@ -1,7 +1,7 @@
 package com.x4yi.automata.ai;
 
 import net.minecraft.entity.player.EntityPlayer;
-import net.minecraft.util.text.TextComponentString;
+import net.minecraft.util.text.TextComponentTranslation;
 
 import com.x4yi.automata.api.AutomatonBuiltInJobs;
 import com.x4yi.automata.entity.EntityAutomaton;
@@ -26,7 +26,10 @@ public final class TaskCompletionService {
             EntityPlayer owner = ctx.getWorld().getPlayerEntityByUUID(bot.getOwnerUuid());
             if (owner != null) {
                 owner.sendStatusMessage(
-                        new TextComponentString("[Automata #" + bot.getEntityId() + "] " + taskDisplayName + " completed"),
+                        new TextComponentTranslation(
+                                "message.automata.task_completed",
+                                bot.getEntityId(),
+                                taskDisplayName),
                         true);
             }
         }

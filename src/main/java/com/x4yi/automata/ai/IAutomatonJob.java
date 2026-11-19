@@ -4,9 +4,6 @@ import net.minecraft.util.ResourceLocation;
 
 import com.x4yi.automata.api.IAutomatonContext;
 
-/**
- * Contract for an automaton job behavior.
- */
 public interface IAutomatonJob {
 
     ResourceLocation getJobId();
@@ -18,5 +15,13 @@ public interface IAutomatonJob {
 
     default boolean hasCommittedWork(IAutomatonContext ctx) {
         return false;
+    }
+
+    /**
+     * Copies up to {@code maxCount} planned packed block coordinates into {@code dest}
+     * without heap allocations, for debug visualization.
+     */
+    default int copyPlannedBreakTargets(long[] dest, int maxCount) {
+        return 0;
     }
 }

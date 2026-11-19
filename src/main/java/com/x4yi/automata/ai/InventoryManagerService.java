@@ -98,6 +98,10 @@ public final class InventoryManagerService {
         double bestDistSq = Double.MAX_VALUE;
         long now = ctx.getWorldTime();
         for (EntityItem item : drops) {
+            if (com.x4yi.automata.compat.SpartanWeaponryCompat.isOwnedByOtherBot(bot, item)
+                    || !SquadSupplyService.canBotPickupItem(bot, item)) {
+                continue;
+            }
             if (!isUsefulDrop(bot, ctx.getTaskConfig(), item.getItem())) {
                 continue;
             }
@@ -124,10 +128,11 @@ public final class InventoryManagerService {
             return EquipmentSelector.getArmorScore(stack) > EquipmentSelector.getArmorScore(equipped) + 0.01F;
         }
         if (stack.getItem() instanceof ItemTool
-                || stack.getItem() instanceof ItemSword
-                || EquipmentSelector.isBowItem(stack)
+                || EquipmentSelector.isCombatWeapon(stack)
                 || EquipmentSelector.isShieldItem(stack)
                 || stack.getItem() instanceof ItemArrow
+                || com.x4yi.automata.compat.SpartanWeaponryCompat.isBoltItem(stack)
+                || com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesFuelAmmo(stack)
                 || stack.getItem() instanceof ItemEnderPearl
                 || stack.getItem() == Items.TOTEM_OF_UNDYING) {
             return true;
@@ -287,7 +292,14 @@ public final class InventoryManagerService {
         if (isFirstFoodStack && stack.getItem() instanceof ItemFood) {
             return true;
         }
-        if (stack.getItem() instanceof ItemTool || stack.getItem() instanceof ItemSword || EquipmentSelector.isShieldItem(stack)) {
+        if (stack.getItem() instanceof ItemTool
+                || EquipmentSelector.isCombatWeapon(stack)
+                || EquipmentSelector.isShieldItem(stack)
+                || com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesFuelAmmo(stack)) {
+            return true;
+        }
+        com.x4yi.automata.api.JobDescriptor descriptor = com.x4yi.automata.api.AutomataAPI.getJob(jobId);
+        if (descriptor != null && descriptor.matchesTool(stack)) {
             return true;
         }
         if (com.x4yi.automata.api.AutomatonBuiltInJobs.FARMER.equals(jobId)) {
@@ -299,11 +311,9 @@ public final class InventoryManagerService {
                 && JobBlockSupport.matchesOreDict(stack, "treeSapling")) {
             return true;
         }
-        return (com.x4yi.automata.api.AutomatonBuiltInJobs.EXCAVATION.equals(jobId)
-                || com.x4yi.automata.api.AutomatonBuiltInJobs.MINE.equals(jobId))
-                && allowScaffolding
+        return allowScaffolding
                 && isFirstScaffoldStack
-                && stack.getItem() instanceof ItemBlock;
+                && com.x4yi.automata.movement.BlockPlacementService.isValidScaffoldBlock(stack);
     }
 }
 

@@ -55,7 +55,26 @@ public final class EquipmentSelector {
 
     public static boolean isBowItem(ItemStack stack) {
         return !stack.isEmpty()
-                && (stack.getItem() instanceof ItemBow || stack.getItemUseAction() == EnumAction.BOW);
+                && (stack.getItem() instanceof ItemBow
+                        || stack.getItemUseAction() == EnumAction.BOW
+                        || com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesRangedItem(stack));
+    }
+
+    public static boolean isCombatWeapon(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+        Item item = stack.getItem();
+        if (item instanceof ItemSword
+                || isBowItem(stack)
+                || com.x4yi.automata.compat.SpartanWeaponryCompat.isSpartanMeleeWeapon(stack)
+                || com.x4yi.automata.compat.SpartanWeaponryCompat.isSpartanRangedItem(stack)
+                || com.x4yi.automata.compat.SrpCompat.isSrpWeapon(stack)
+                || com.x4yi.automata.compat.ModdedWeaponCompat.isBetterSurvivalWeapon(stack)
+                || com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesSrpWeapon(stack)) {
+            return true;
+        }
+        return getAttackDamage(stack) >= 4.0D;
     }
 
     public static void equipBestToolFor(EntityAutomaton automaton, IBlockState targetState) {
@@ -67,6 +86,9 @@ public final class EquipmentSelector {
             @Nullable WorldServer world,
             @Nullable BlockPos pos,
             IBlockState targetState) {
+        if (automaton.isEating()) {
+            return;
+        }
         IItemHandlerModifiable inv = automaton.getInventory().getCombinedInventory();
         ItemStack current = automaton.getHeldItemMainhand();
         float bestScore = scoreToolForBlock(current, world, pos, targetState);
@@ -87,6 +109,7 @@ public final class EquipmentSelector {
         if (bestSlot >= 0) {
             swapMainHandWithSlot(automaton, inv, bestSlot);
         }
+        clearOffhandIfTwoHanded(automaton, inv);
     }
 
     public static float scoreToolForBlock(
@@ -130,6 +153,9 @@ public final class EquipmentSelector {
     }
 
     public static void equipBestWeapon(EntityAutomaton automaton) {
+        if (automaton.isEating()) {
+            return;
+        }
         IItemHandlerModifiable inv = automaton.getInventory().getCombinedInventory();
         ItemStack current = automaton.getHeldItemMainhand();
         boolean currentSafe = hasSafeDurability(current);
@@ -151,15 +177,137 @@ public final class EquipmentSelector {
         if (bestSlot >= 0) {
             swapMainHandWithSlot(automaton, inv, bestSlot);
         }
+        clearOffhandIfTwoHanded(automaton, inv);
     }
 
-    private static double scoreMeleeWeapon(ItemStack stack) {
+    public static boolean hasAlternativeCombatWeapon(EntityAutomaton automaton) {
+        ItemStack main = automaton.getHeldItemMainhand();
+        if (!main.isEmpty()
+                && !com.x4yi.automata.compat.SrpCompat.isBookOfVengeance(main)
+                && isCombatWeapon(main)
+                && hasSafeDurability(main)) {
+            return true;
+        }
+        IItemHandlerModifiable inv = automaton.getInventory().getCombinedInventory();
+        for (int i = 0; i < inv.getSlots(); i++) {
+            ItemStack candidate = inv.getStackInSlot(i);
+            if (!candidate.isEmpty()
+                    && !com.x4yi.automata.compat.SrpCompat.isBookOfVengeance(candidate)
+                    && isCombatWeapon(candidate)
+                    && hasSafeDurability(candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static double estimateBestNonBookWeaponDamage(EntityAutomaton automaton) {
+        double best = 2.0D;
+        ItemStack main = automaton.getHeldItemMainhand();
+        if (!main.isEmpty() && !com.x4yi.automata.compat.SrpCompat.isBookOfVengeance(main) && hasSafeDurability(main)) {
+            best = Math.max(best, getAttackDamage(main));
+        }
+        IItemHandlerModifiable inv = automaton.getInventory().getCombinedInventory();
+        for (int i = 0; i < inv.getSlots(); i++) {
+            ItemStack candidate = inv.getStackInSlot(i);
+            if (!candidate.isEmpty()
+                    && !com.x4yi.automata.compat.SrpCompat.isBookOfVengeance(candidate)
+                    && isCombatWeapon(candidate)
+                    && hasSafeDurability(candidate)) {
+                best = Math.max(best, getAttackDamage(candidate));
+            }
+        }
+        return best;
+    }
+
+    public static boolean equipBestNonBookWeapon(EntityAutomaton automaton) {
+        if (automaton.isEating()) {
+            return false;
+        }
+        IItemHandlerModifiable inv = automaton.getInventory().getCombinedInventory();
+        ItemStack current = automaton.getHeldItemMainhand();
+        boolean currentValid = !current.isEmpty()
+                && !com.x4yi.automata.compat.SrpCompat.isBookOfVengeance(current)
+                && isCombatWeapon(current)
+                && hasSafeDurability(current);
+        double bestScore = currentValid ? scoreMeleeWeapon(current) : -1.0D;
+        int bestSlot = -1;
+        for (int i = 0; i < inv.getSlots(); i++) {
+            ItemStack candidate = inv.getStackInSlot(i);
+            if (candidate.isEmpty()
+                    || com.x4yi.automata.compat.SrpCompat.isBookOfVengeance(candidate)
+                    || !isCombatWeapon(candidate)
+                    || !hasSafeDurability(candidate)) {
+                continue;
+            }
+            double score = scoreMeleeWeapon(candidate);
+            if (score > bestScore) {
+                bestScore = score;
+                bestSlot = i;
+            }
+        }
+        if (bestSlot >= 0) {
+            swapMainHandWithSlot(automaton, inv, bestSlot);
+            clearOffhandIfTwoHanded(automaton, inv);
+            return true;
+        }
+        return currentValid;
+    }
+
+    public static boolean equipBookOfVengeance(EntityAutomaton automaton, boolean forceForEmergency) {
+        if (com.x4yi.automata.compat.SrpCompat.isBookOfVengeance(automaton.getHeldItemMainhand())) {
+            return true;
+        }
+        if (automaton.isEating()) {
+            if (!forceForEmergency) {
+                return false;
+            }
+            automaton.cancelEating();
+        }
+        IItemHandlerModifiable inv = automaton.getInventory().getCombinedInventory();
+        for (int i = 0; i < inv.getSlots(); i++) {
+            if (com.x4yi.automata.compat.SrpCompat.isBookOfVengeance(inv.getStackInSlot(i))) {
+                swapMainHandWithSlot(automaton, inv, i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void clearOffhandIfTwoHanded(EntityAutomaton automaton, IItemHandlerModifiable inv) {
+        ItemStack equipped = automaton.getHeldItemMainhand();
+        if (!equipped.isEmpty() && com.x4yi.automata.compat.SpartanWeaponryCompat.isTwoHanded(equipped)) {
+            ItemStack offhand = automaton.getHeldItemOffhand();
+            if (!offhand.isEmpty()) {
+                ItemStack remainder = net.minecraftforge.items.ItemHandlerHelper.insertItemStacked(inv, offhand.copy(), false);
+                automaton.setHeldItem(EnumHand.OFF_HAND, remainder);
+            }
+        }
+    }
+
+    public static double scoreMeleeWeapon(ItemStack stack) {
+        if (com.x4yi.automata.compat.SrpCompat.isBookOfVengeance(stack)) {
+            return 22.0D;
+        }
         if (com.x4yi.automata.compat.SpartanWeaponryCompat.isBoomerang(stack)
                 || com.x4yi.automata.compat.SpartanWeaponryCompat.isCrossbow(stack)
-                || com.x4yi.automata.compat.SpartanWeaponryCompat.isThrowableWeapon(stack)) {
+                || com.x4yi.automata.compat.SpartanWeaponryCompat.isThrowableWeapon(stack)
+                || com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesRangedItem(stack)) {
             return 1.0D;
         }
-        return getAttackDamage(stack) + com.x4yi.automata.compat.SpartanWeaponryCompat.getReachBonus(stack) * 1.25D;
+        double dmg = getAttackDamage(stack);
+        if (dmg <= 1.0D && !isCombatWeapon(stack)) {
+            return 1.0D;
+        }
+        double speedMod = com.x4yi.automata.compat.SpartanWeaponryCompat.getAttackSpeedModifier(stack);
+        double attacksPerSec = Math.max(0.5D, 4.0D + speedMod);
+        double dpsFactor = 0.55D + Math.min(2.4D, attacksPerSec * 0.30D);
+        double quickBonus = com.x4yi.automata.compat.ModdedWeaponCompat.isRapidSpamWeapon(stack) ? 2.5D : 0.0D;
+        double srpBonus = com.x4yi.automata.compat.SrpCompat.isSrpSentientOrLivingWeapon(stack) ? 1.5D : 0.0D;
+        return dmg * dpsFactor
+                + com.x4yi.automata.compat.SpartanWeaponryCompat.getReachBonus(stack) * 1.25D
+                + quickBonus
+                + srpBonus;
     }
 
     public static int findHealingOrCureConsumableSlot(
@@ -244,6 +392,9 @@ public final class EquipmentSelector {
     }
 
     public static boolean equipBuildingBlock(EntityAutomaton automaton) {
+        if (automaton.isEating()) {
+            automaton.cancelEating();
+        }
         ItemStack current = automaton.getHeldItemMainhand();
         if (com.x4yi.automata.movement.BlockPlacementService.isValidScaffoldBlock(current)) {
             return true;
@@ -279,7 +430,7 @@ public final class EquipmentSelector {
         return total;
     }
 
-    private static double getAttackDamage(ItemStack stack) {
+    public static double getAttackDamage(ItemStack stack) {
         if (stack.isEmpty()) {
             return 1.0D;
         }
@@ -326,6 +477,19 @@ public final class EquipmentSelector {
                 || stack.getItem() instanceof net.minecraft.item.ItemSpade
                 || stack.getItem().getToolClasses(stack).contains("shovel")
                 || stack.getItem().getHarvestLevel(stack, "shovel", null, null) >= 0;
+    }
+
+    public static boolean equipSlotInMainHand(EntityAutomaton automaton, int slot) {
+        if (automaton.isEating() || slot < 0) {
+            return false;
+        }
+        IItemHandlerModifiable inv = automaton.getInventory().getCombinedInventory();
+        if (slot >= inv.getSlots() || inv.getStackInSlot(slot).isEmpty()) {
+            return false;
+        }
+        swapMainHandWithSlot(automaton, inv, slot);
+        clearOffhandIfTwoHanded(automaton, inv);
+        return true;
     }
 
     private static void swapMainHandWithSlot(EntityAutomaton automaton, IItemHandlerModifiable inv, int slot) {
