@@ -75,6 +75,25 @@ public final class JobBlockSupport {
         return state.getMaterial() == Material.LEAVES || state.getBlock().isLeaves(state, world, pos);
     }
 
+    static int[] computeWorkerSectorForSquad(AutomatonAIContext ctx, net.minecraft.util.ResourceLocation jobId) {
+        EntityAutomaton bot = ctx.getAutomaton();
+        if (!ctx.getTaskConfig().isSquadCooperation()) {
+            return new int[] {0, 1};
+        }
+        java.util.List<Integer> peerIds = new java.util.ArrayList<>();
+        for (net.minecraft.entity.EntityLivingBase entity : ctx.getNearbyLivingEntities(32.0D)) {
+            if (entity instanceof EntityAutomaton ally
+                    && ally != bot
+                    && ally.isEntityAlive()
+                    && !ally.isDowned()
+                    && bot.isAlliedWith(ally)
+                    && jobId.equals(ally.getTaskConfig().getJobId())) {
+                peerIds.add(ally.getEntityId());
+            }
+        }
+        return com.x4yi.automata.coordination.SquadBlackboard.computeSquadWorkerIndex(bot.getEntityId(), peerIds);
+    }
+
     static boolean tryReserve(AutomatonAIContext ctx, BlockPos pos) {
         if (!ctx.getTaskConfig().isSquadCooperation()) {
             return true;
@@ -97,7 +116,10 @@ public final class JobBlockSupport {
         bot.setMoveForward(0.0F);
         bot.setMoveStrafing(0.0F);
         bot.setSprinting(false);
-        ctx.getMovement().lookSmoothlyAt(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
+        ctx.getMovement().lookAtBlockFace(pos);
+        if (!ctx.getMovement().isAlignedWithBlock(pos, 45.0F)) {
+            return false;
+        }
         if (MiningProgressController.shouldDeferMiningInAir(bot.onGround, bot.isInWater(), bot.isOnLadder())) {
             return false;
         }

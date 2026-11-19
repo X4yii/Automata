@@ -1,5 +1,7 @@
 package com.x4yi.automata.ai.jobs;
 
+import java.util.List;
+
 import javax.annotation.Nullable;
 
 import net.minecraft.entity.EntityLivingBase;
@@ -30,6 +32,133 @@ public final class TacticalUtilityController {
     private static final double PEARL_ESCAPE_MAX_SQ = 64.0D;
 
     private TacticalUtilityController() {}
+
+    public static boolean tickWaterDropClutch20Hz(AutomatonAIContext ctx) {
+        EntityAutomaton bot = ctx.getAutomaton();
+        long now = ctx.getWorldTime();
+        BlockPos activeDrop = ctx.getActiveWaterDropPos();
+        if (activeDrop != null) {
+            if (now - ctx.getWaterDropPlacedTick() > 40L) {
+                ctx.clearActiveWaterDrop();
+            } else if (now - ctx.getWaterDropPlacedTick() >= 2L
+                    && (bot.onGround || bot.isInWater())
+                    && bot.getDistanceSqToCenter(activeDrop) <= 20.25D) {
+                if (bot.world.getBlockState(activeDrop).getMaterial() == net.minecraft.block.material.Material.WATER
+                        && swapBucketItem(bot, Items.BUCKET, Items.WATER_BUCKET)) {
+                    bot.world.setBlockToAir(activeDrop);
+                    bot.swingArm(EnumHand.MAIN_HAND);
+                    bot.world.playSound(
+                            null, bot.posX, bot.posY, bot.posZ,
+                            SoundEvents.ITEM_BUCKET_FILL, SoundCategory.NEUTRAL, 0.7F, 1.0F);
+                    ctx.clearActiveWaterDrop();
+                    return true;
+                }
+            }
+        }
+
+        if (bot.onGround || bot.isInWater() || bot.isInLava() || bot.fallDistance <= 3.2F || bot.motionY >= -0.15D) {
+            return false;
+        }
+        if (bot.world.provider.doesWaterVaporize()) {
+            return false;
+        }
+        BlockPos feet = bot.getPosition();
+        BlockPos waterPos = null;
+        for (int dy = 1; dy <= 3; dy++) {
+            BlockPos check = feet.down(dy);
+            if (!bot.world.isBlockLoaded(check)) {
+                break;
+            }
+            if (bot.world.getBlockState(check).getMaterial().blocksMovement()) {
+                BlockPos above = check.up();
+                net.minecraft.block.state.IBlockState aboveState = bot.world.getBlockState(above);
+                if (!aboveState.getMaterial().isLiquid()
+                        && (bot.world.isAirBlock(above) || aboveState.getBlock().isReplaceable(bot.world, above))) {
+                    waterPos = above;
+                }
+                break;
+            }
+        }
+        if (waterPos == null || !swapBucketItem(bot, Items.WATER_BUCKET, Items.BUCKET)) {
+            return false;
+        }
+        ctx.getMovement().snapLook(bot.rotationYaw, 90.0F);
+        bot.world.setBlockState(waterPos, net.minecraft.init.Blocks.FLOWING_WATER.getDefaultState(), 11);
+        bot.fallDistance = 0.0F;
+        bot.motionY = Math.max(bot.motionY, -0.08D);
+        bot.swingArm(EnumHand.MAIN_HAND);
+        bot.world.playSound(
+                null, bot.posX, bot.posY, bot.posZ,
+                SoundEvents.ITEM_BUCKET_EMPTY, SoundCategory.NEUTRAL, 0.7F, 1.0F);
+        ctx.setActiveWaterDrop(waterPos, now);
+        return true;
+    }
+
+    static boolean swapBucketItem(EntityAutomaton bot, net.minecraft.item.Item expected, net.minecraft.item.Item replacement) {
+        if (bot.isEating()) {
+            bot.cancelEating();
+        }
+        if (bot.getHeldItemMainhand().getItem() == expected) {
+            if (bot.getHeldItemMainhand().getCount() == 1) {
+                bot.setHeldItem(EnumHand.MAIN_HAND, new ItemStack(replacement));
+            } else {
+                bot.getHeldItemMainhand().shrink(1);
+                insertBucketReplacement(bot, new ItemStack(replacement));
+            }
+            return true;
+        }
+        if (bot.getHeldItemOffhand().getItem() == expected) {
+            if (bot.getHeldItemOffhand().getCount() == 1) {
+                bot.setHeldItem(EnumHand.OFF_HAND, new ItemStack(replacement));
+            } else {
+                bot.getHeldItemOffhand().shrink(1);
+                insertBucketReplacement(bot, new ItemStack(replacement));
+            }
+            return true;
+        }
+        if (swapBucketInHandler(bot, bot.getInventory().getMainInventory(), expected, replacement)) {
+            return true;
+        }
+        IItemHandlerModifiable backpack = bot.getInventory().getBackpackHandler();
+        return backpack != null && swapBucketInHandler(bot, backpack, expected, replacement);
+    }
+
+    private static boolean swapBucketInHandler(
+            EntityAutomaton bot,
+            IItemHandlerModifiable inv,
+            net.minecraft.item.Item expected,
+            net.minecraft.item.Item replacement) {
+        for (int i = 0; i < inv.getSlots(); i++) {
+            ItemStack s = inv.getStackInSlot(i);
+            if (s.isEmpty() || s.getItem() != expected) {
+                continue;
+            }
+            if (s.getCount() == 1) {
+                inv.setStackInSlot(i, new ItemStack(replacement));
+                return true;
+            }
+            ItemStack extracted = inv.extractItem(i, 1, false);
+            if (!extracted.isEmpty()) {
+                insertBucketReplacement(bot, new ItemStack(replacement));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void insertBucketReplacement(EntityAutomaton bot, ItemStack stack) {
+        ItemStack rem = net.minecraftforge.items.ItemHandlerHelper.insertItemStacked(
+                bot.getInventory().getMainInventory(), stack, false);
+        if (!rem.isEmpty()) {
+            IItemHandlerModifiable backpack = bot.getInventory().getBackpackHandler();
+            if (backpack != null) {
+                rem = net.minecraftforge.items.ItemHandlerHelper.insertItemStacked(backpack, rem, false);
+            }
+        }
+        if (!rem.isEmpty()) {
+            bot.entityDropItem(rem, 0.0F);
+        }
+    }
 
     public static boolean tryEmergencyPearlRescue(AutomatonAIContext ctx) {
         EntityAutomaton bot = ctx.getAutomaton();
@@ -70,32 +199,67 @@ public final class TacticalUtilityController {
             Vec3d escapeVec = bot.getPositionVector().add(away.normalize().scale(14.0D));
             return throwPearlToward(ctx, bot, escapeVec.add(0.0D, 2.0D, 0.0D), now);
         }
-        if (!lowHealth && distSq >= PEARL_CHASE_MIN_SQ && bot.canEntityBeSeen(target)) {
+        if (!lowHealth && shouldThrowChasePearl(
+                distSq,
+                AdaptiveThreatAnalyzer.isAerialThreat(bot, target),
+                target.onGround,
+                target.posY - bot.posY,
+                bot.canEntityBeSeen(target))) {
             return throwPearlToward(ctx, bot, target.getPositionVector().add(0.0D, 0.5D, 0.0D), now);
         }
         return false;
     }
 
+    static boolean shouldThrowChasePearl(
+            double distSq,
+            boolean aerialThreat,
+            boolean targetGrounded,
+            double dy,
+            boolean canSee) {
+        return distSq >= PEARL_CHASE_MIN_SQ
+                && !aerialThreat
+                && (targetGrounded || Math.abs(dy) <= 2.5D)
+                && canSee;
+    }
+
     public static void updateShieldDefense(EntityAutomaton bot, @Nullable EntityLivingBase threat, double distSq) {
+        updateShieldDefense(null, bot, threat, distSq);
+    }
+
+    public static void updateShieldDefense(
+            @Nullable AutomatonAIContext ctx,
+            EntityAutomaton bot,
+            @Nullable EntityLivingBase threat,
+            double distSq) {
         ItemStack offhand = bot.getHeldItemOffhand();
-        boolean hasShield = com.x4yi.automata.ai.EquipmentSelector.isShieldItem(offhand);
+        boolean hasShield = com.x4yi.automata.ai.EquipmentSelector.isShieldItem(offhand)
+                && !com.x4yi.automata.compat.ModCompatBridge.isTwoHandedWeapon(bot.getHeldItemMainhand());
         if (!hasShield) {
             return;
         }
         boolean shouldBlock = shouldRaiseShield(bot, threat, distSq);
         if (!shouldBlock && threat != null && !bot.isEating()) {
-            for (EntityLivingBase nearby : bot.world.getEntitiesWithinAABB(
-                    EntityLivingBase.class,
-                    bot.getEntityBoundingBox().grow(14.0D, 4.0D, 14.0D))) {
+            List<EntityLivingBase> living = ctx != null
+                    ? ctx.getNearbyLivingEntities(16.0D)
+                    : bot.world.getEntitiesWithinAABB(EntityLivingBase.class, bot.getEntityBoundingBox().grow(14.0D, 4.0D, 14.0D));
+            for (int i = 0, n = living.size(); i < n; i++) {
+                EntityLivingBase nearby = living.get(i);
                 if (nearby == bot || nearby == threat || !nearby.isEntityAlive()) {
                     continue;
                 }
                 double dSq = bot.getDistanceSq(nearby);
-                if (nearby instanceof EntityCreeper creeper && creeper.getCreeperState() > 0 && dSq <= 36.0D) {
+                if (dSq > 256.0D) {
+                    continue;
+                }
+                if (((nearby instanceof EntityCreeper creeper && creeper.getCreeperState() > 0)
+                        || com.x4yi.automata.compat.ModCompatBridge.isImminentSwellingExplosive(nearby))
+                        && dSq <= 36.0D) {
                     shouldBlock = true;
                     break;
                 }
-                if (nearby instanceof IRangedAttackMob && dSq <= 256.0D && bot.canEntityBeSeen(nearby)) {
+                if ((nearby instanceof IRangedAttackMob
+                        || com.x4yi.automata.compat.ModCompatBridge.isModdedRangedOrPuller(nearby))
+                        && (ctx != null ? ctx.canSeeEntityCached(nearby) : bot.canEntityBeSeen(nearby))) {
                     shouldBlock = true;
                     break;
                 }
@@ -114,15 +278,19 @@ public final class TacticalUtilityController {
         if (threat == null || bot.isEating()) {
             return false;
         }
-        if (threat instanceof EntityCreeper creeper && creeper.getCreeperState() > 0 && distSq <= 36.0D) {
+        if (((threat instanceof EntityCreeper creeper && creeper.getCreeperState() > 0)
+                || com.x4yi.automata.compat.ModCompatBridge.isImminentSwellingExplosive(threat))
+                && distSq <= 36.0D) {
             return true;
         }
-        if ((threat instanceof IRangedAttackMob || AdaptiveThreatAnalyzer.isRangedOrSpecialThreat(threat))
+        if ((threat instanceof IRangedAttackMob
+                || com.x4yi.automata.compat.ModCompatBridge.isModdedRangedOrPuller(threat)
+                || AdaptiveThreatAnalyzer.isRangedOrSpecialThreat(threat))
                 && distSq <= 256.0D
                 && bot.canEntityBeSeen(threat)) {
             return !bot.isAttackReady() || distSq > 16.0D;
         }
-        return distSq <= 12.25D && !bot.isAttackReady();
+        return !bot.isAttackReady() && (distSq <= 20.25D || bot.hurtTime > 0);
     }
 
     public static boolean tryDrinkConsumable(AutomatonAIContext ctx) {

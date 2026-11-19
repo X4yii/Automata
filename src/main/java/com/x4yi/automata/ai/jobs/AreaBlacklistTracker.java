@@ -7,9 +7,6 @@ import net.minecraft.util.math.BlockPos;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
 
-/**
- * Tracks temporary unreachable target blacklisting per automaton job instance.
- */
 public final class AreaBlacklistTracker {
 
     private static final long DEFAULT_BLACKLIST_TICKS = 100L;

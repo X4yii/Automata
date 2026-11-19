@@ -16,10 +16,6 @@ import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.entity.EntityAutomaton;
 import com.x4yi.automata.movement.CellClassifier;
 
-/**
- * Patrols/roams strictly within the automaton's assigned work zone, keeps chunks loaded,
- * and engages hostile targets inside the zone.
- */
 public class RoamJob implements IAutomatonJob {
 
     private static final double ZONE_SCAN_RADIUS = 28.0D;
@@ -32,6 +28,14 @@ public class RoamJob implements IAutomatonJob {
     @Override
     public ResourceLocation getJobId() {
         return AutomatonBuiltInJobs.ROAM;
+    }
+
+    @Override
+    public boolean hasCommittedWork(IAutomatonContext publicCtx) {
+        AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
+        return ctx.getCombatTacticsState().activeTargetId >= 0
+                || (ctx.getWorldTime() - ctx.getCombatTacticsState().lastEngagedTick <= 40L)
+                || ctx.getAutomaton().getRevengeTarget() != null;
     }
 
     @Override
@@ -69,6 +73,10 @@ public class RoamJob implements IAutomatonJob {
             return;
         }
 
+        CombatJobSupport.cancelBowDraw(ctx);
+        if (CombatJobSupport.tryRecoverOwnedThrownWeapons(ctx, bot)) {
+            return;
+        }
         long now = ctx.getWorldTime();
         if (ctx.getMovement().hasActivePath()) {
             if (currentWaypoint != null) {

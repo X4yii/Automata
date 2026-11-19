@@ -45,6 +45,7 @@ public class MineJob implements IAutomatonJob {
     private BlockPos cachedTarget;
     private boolean commandedVeinActive;
     private int veinStallTicks;
+    private long nextFullScanTick = Long.MIN_VALUE;
 
     @Override
     public ResourceLocation getJobId() {
@@ -66,6 +67,7 @@ public class MineJob implements IAutomatonJob {
         activeVeinQueue.clear();
         commandedVeinActive = false;
         veinStallTicks = 0;
+        nextFullScanTick = Long.MIN_VALUE;
         blacklistTracker.clear();
     }
 
@@ -78,6 +80,7 @@ public class MineJob implements IAutomatonJob {
         activeVeinQueue.clear();
         cachedTarget = null;
         veinStallTicks = 0;
+        nextFullScanTick = Long.MIN_VALUE;
         if (vein.isEmpty()) {
             commandedVeinActive = false;
             return 0;
@@ -180,7 +183,7 @@ public class MineJob implements IAutomatonJob {
         if (!AutomatonBuiltInJobs.MINE.equals(bot.getTaskConfig().getJobId())) {
             return false;
         }
-        player.sendMessage(new TextComponentString(REJECT_ZONE_MESSAGE));
+        player.sendMessage(new net.minecraft.util.text.TextComponentTranslation("message.automata.miner_no_area"));
         return true;
     }
 
@@ -220,7 +223,8 @@ public class MineJob implements IAutomatonJob {
             if (isMineableExposedOre(world, cachedTarget, cachedState)
                     && !blacklistTracker.isBlacklisted(cachedTarget, now)
                     && !ctx.isGoalOnCooldown(cachedTarget, now)
-                    && !ctx.getBlackboard().isReservedByOther(bot.getEntityId(), cachedTarget, now)) {
+                    && !ctx.getBlackboard().isReservedByOther(bot.getEntityId(), cachedTarget, now)
+                    && com.x4yi.automata.compat.ClaimProtectionCompat.canModifyBlock(world, bot, cachedTarget)) {
                 return cachedTarget;
             }
             JobBlockSupport.release(ctx, cachedTarget);
@@ -231,6 +235,9 @@ public class MineJob implements IAutomatonJob {
         if (veinNext != null) {
             cachedTarget = veinNext;
             return veinNext;
+        }
+        if (now < nextFullScanTick) {
+            return null;
         }
 
         BlockPos best = null;
@@ -251,6 +258,10 @@ public class MineJob implements IAutomatonJob {
                     if (!isMineableExposedOre(world, mutable, state)) {
                         continue;
                     }
+                    if (!com.x4yi.automata.compat.ClaimProtectionCompat.canModifyBlock(world, bot, mutable)) {
+                        blacklistTracker.blacklist(mutable, now);
+                        continue;
+                    }
                     double dSq = bot.getDistanceSqToCenter(mutable);
                     if (dSq < bestDistSq && hasReachableApproach(world, bot, ctx.getTaskConfig().isAllowScaffolding(), mutable)) {
                         bestDistSq = dSq;
@@ -265,6 +276,7 @@ public class MineJob implements IAutomatonJob {
             enqueueContiguousVein(world, best);
             return best;
         }
+        nextFullScanTick = now + 20L;
         return null;
     }
 

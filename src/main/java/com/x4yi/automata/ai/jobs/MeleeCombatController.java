@@ -36,35 +36,44 @@ final class MeleeCombatController {
             long now,
             boolean targetInvulnerable,
             boolean coop) {
-        if (bot.isHandActive()) {
+        if (bot.isAttackReady() && bot.isHandActive()) {
             bot.resetActiveHand();
         }
         ctx.stopNavigation();
         ctx.getMovement().lookSmoothlyAt(target.posX, target.posY + target.getEyeHeight(), target.posZ);
 
-        if (!bot.isAttackReady() && distSq < AXE_SPACE_MIN_SQ) {
-            float[] input = CombatJobSupport.computeCombatStrafeInput(distSq, false, false, true, state.strafeDir);
+        double hitboxDistSq = CombatJobSupport.computeDistanceSqToHitbox(bot, target);
+        if (hitboxDistSq <= ATTACK_RANGE_SQ
+                && bot.isAttackReady()
+                && !targetInvulnerable
+                && bot.canEntityBeSeen(target)) {
+            boolean fallingCrit = !bot.onGround && bot.fallDistance > 0.0F && bot.motionY < -0.05D;
+            if (fallingCrit || bot.onGround || bot.isInWater()) {
+                if (fallingCrit) {
+                    bot.setSprinting(false);
+                }
+                performMeleeStrike(ctx, bot, target, state, now, coop);
+                return;
+            }
+        }
+
+        if (!bot.isAttackReady() && hitboxDistSq < AXE_SPACE_MIN_SQ) {
+            float[] input = CombatJobSupport.computeCombatStrafeInput(hitboxDistSq, false, false, true, state.strafeDir);
             applyCombatStrafe(ctx, bot, target, state, input[0], input[1], true, now);
             return;
         }
 
-        if (!bot.onGround && bot.fallDistance > 0.0F && bot.motionY < -0.05D
-                && distSq <= ATTACK_RANGE_SQ && bot.isAttackReady() && !targetInvulnerable) {
-            bot.setSprinting(false);
-            performMeleeStrike(ctx, bot, target, state, now, coop);
-            return;
-        }
-
         if (bot.isAttackReady()) {
-            bot.setSprinting(true);
-            ctx.getMovement().applyDirectStrafe(1.0F, state.strafeDir * 0.25F, 1.0F);
-            if (bot.onGround) {
+            bot.setSprinting(false);
+            float[] input = CombatJobSupport.computeCombatStrafeInput(hitboxDistSq, false, false, false, state.strafeDir);
+            applyCombatStrafe(ctx, bot, target, state, input[0], input[1], false, now);
+            if (bot.onGround && hitboxDistSq > ATTACK_RANGE_SQ) {
                 bot.getJumpHelper().setJumping();
             } else if (bot.isInWater() && target.posY > bot.posY + 0.6D) {
                 bot.getJumpHelper().setJumping();
             }
         } else {
-            float[] input = CombatJobSupport.computeCombatStrafeInput(distSq, false, false, false, state.strafeDir);
+            float[] input = CombatJobSupport.computeCombatStrafeInput(hitboxDistSq, false, false, false, state.strafeDir);
             applyCombatStrafe(ctx, bot, target, state, input[0], input[1], true, now);
         }
     }
@@ -76,10 +85,34 @@ final class MeleeCombatController {
             CombatJobSupport.CombatTacticsState state,
             long now,
             boolean coop) {
+        performMeleeStrike(ctx, bot, target, state, now, coop, true);
+    }
+
+    static void performMeleeStrike(
+            AutomatonAIContext ctx,
+            EntityAutomaton bot,
+            EntityLivingBase target,
+            CombatJobSupport.CombatTacticsState state,
+            long now,
+            boolean coop,
+            boolean applySTap) {
+        float hpBefore = target.getHealth();
         bot.swingArm(EnumHand.MAIN_HAND);
         FakePlayerService.attackEntity(ctx.getWorld(), bot, target);
+        float dealt = hpBefore - target.getHealth();
+        double expectedMin = Math.max(1.0D, ctx.getLoadoutProfile().bestMeleeDamage() * 0.20D);
+        if (state.trackedHitTargetId == target.getEntityId()) {
+            if (dealt >= 0.0F && dealt < expectedMin) {
+                if (++state.lowDamageStreak >= 2) {
+                    state.preferSecondaryWeaponUntilTick = now + 120L;
+                    state.lowDamageStreak = 0;
+                }
+            } else {
+                state.lowDamageStreak = 0;
+            }
+        }
         bot.setSprinting(false);
-        state.sTapUntilTick = now + 4L;
+        state.sTapUntilTick = applySTap ? now + 3L : -1L;
         if (coop) {
             ctx.getBlackboard().releaseAttackTurn(bot.getEntityId(), target.getEntityId(), now);
         }
@@ -94,16 +127,25 @@ final class MeleeCombatController {
             float strafe,
             boolean allowSprintBunnyhop,
             long now) {
-        if (bot.hurtTime > 0 && now - state.lastStrafeFlipTick >= 8L) {
+        if (ctx.getTaskConfig().isSquadCooperation() && now - state.lastStrafeFlipTick >= 6L) {
+            double assignedAngle = ctx.getBlackboard().getAssignedFlankAngleRad(bot.getEntityId(), target.getEntityId(), now);
+            if (!Double.isNaN(assignedAngle)) {
+                double currentAngle = Math.atan2(bot.posZ - target.posZ, bot.posX - target.posX);
+                double diff = Math.atan2(Math.sin(assignedAngle - currentAngle), Math.cos(assignedAngle - currentAngle));
+                if (Math.abs(diff) > 0.35D) {
+                    int desiredDir = diff >= 0.0D ? 1 : -1;
+                    if (state.strafeDir != desiredDir) {
+                        state.lastStrafeFlipTick = now;
+                        state.strafeDir = desiredDir;
+                        strafe = desiredDir * Math.abs(strafe);
+                    }
+                }
+            }
+        }
+        if (bot.hurtTime > 0 && now - state.lastStrafeFlipTick >= 10L) {
             state.lastStrafeFlipTick = now;
             state.strafeDir = -state.strafeDir;
             strafe = -strafe;
-        } else if (now - state.lastStrafeFlipTick >= 14L) {
-            state.lastStrafeFlipTick = now;
-            if (bot.getRNG().nextFloat() < 0.45F) {
-                state.strafeDir = -state.strafeDir;
-                strafe = -strafe;
-            }
         }
 
         double dx = target.posX - bot.posX;
@@ -113,14 +155,24 @@ final class MeleeCombatController {
             double sx = (-dz / len) * state.strafeDir;
             double sz = (dx / len) * state.strafeDir;
             BlockPos lateralDest = new BlockPos(bot.posX + sx * 1.8D, bot.posY, bot.posZ + sz * 1.8D);
-            if (!isStrafeDestinationSafe(ctx, ctx.getWorld(), lateralDest, target)
+            boolean currentUnsafe = !isStrafeDestinationSafe(ctx, ctx.getWorld(), lateralDest, target)
                     || hasNearbyAllyCached(bot, lateralDest, state, now)
-                    || ThreatFieldEvaluator.hasOtherEnemyNear(ctx, bot, lateralDest, target)) {
-                state.strafeDir = -state.strafeDir;
-                strafe = -strafe;
-                sx = -sx;
-                sz = -sz;
-                lateralDest = new BlockPos(bot.posX + sx * 1.8D, bot.posY, bot.posZ + sz * 1.8D);
+                    || ThreatFieldEvaluator.hasOtherEnemyNear(ctx, bot, lateralDest, target);
+            if (currentUnsafe) {
+                BlockPos oppositeDest = new BlockPos(bot.posX - sx * 1.8D, bot.posY, bot.posZ - sz * 1.8D);
+                boolean oppositeSafe = isStrafeDestinationSafe(ctx, ctx.getWorld(), oppositeDest, target)
+                        && !hasNearbyAllyCached(bot, oppositeDest, state, now)
+                        && !ThreatFieldEvaluator.hasOtherEnemyNear(ctx, bot, oppositeDest, target);
+                if (oppositeSafe && now - state.lastStrafeFlipTick >= 6L) {
+                    state.lastStrafeFlipTick = now;
+                    state.strafeDir = -state.strafeDir;
+                    strafe = -strafe;
+                    sx = -sx;
+                    sz = -sz;
+                    lateralDest = oppositeDest;
+                } else {
+                    strafe = 0.0F;
+                }
             }
             if (allowSprintBunnyhop && bot.onGround && isStrafeDestinationSafe(ctx, ctx.getWorld(), lateralDest, target)
                     && (forward > 0.8F || forward < -0.8F)) {

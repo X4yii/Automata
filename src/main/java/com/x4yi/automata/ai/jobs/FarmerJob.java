@@ -54,6 +54,11 @@ public class FarmerJob implements IAutomatonJob {
     }
 
     @Override
+    public boolean hasCommittedWork(IAutomatonContext ctx) {
+        return cachedTarget != null;
+    }
+
+    @Override
     public void onStop(IAutomatonContext publicCtx) {
         AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         if (cachedTarget != null) {
@@ -198,9 +203,9 @@ public class FarmerJob implements IAutomatonJob {
         EntityPlayer owner = world.getPlayerEntityByUUID(bot.getOwnerUuid());
         if (owner != null) {
             owner.sendStatusMessage(
-                    new TextComponentString(
-                            "[Automata #" + bot.getEntityId()
-                                    + "] Select a farm area (Pos1 & Pos2) - I'm not farming the whole planet!"),
+                    new net.minecraft.util.text.TextComponentTranslation(
+                            "message.automata.farmer_need_area",
+                            bot.getEntityId()),
                     true);
         }
     }
@@ -279,7 +284,7 @@ public class FarmerJob implements IAutomatonJob {
         int entityId = bot.getEntityId();
         FarmScanResult result = new FarmScanResult();
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        Set<Long> waterCache = null;
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet waterCache = null;
 
         for (int y = bounds.minY(); y <= bounds.maxY(); y++) {
             for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
@@ -297,6 +302,10 @@ public class FarmerJob implements IAutomatonJob {
 
                     if (isMatureCrop(world, cursor, state)) {
                         if (distSq < result.matureDistSq) {
+                            if (!com.x4yi.automata.compat.ClaimProtectionCompat.canModifyBlock(world, bot, cursor)) {
+                                blacklistTarget(cursor, now);
+                                continue;
+                            }
                             result.matureDistSq = distSq;
                             result.matureCrop = cursor.toImmutable();
                         }
@@ -308,6 +317,10 @@ public class FarmerJob implements IAutomatonJob {
                             && world.isAirBlock(cursor.up())) {
                         if (block == Blocks.SOUL_SAND) {
                             if (distSq < result.emptyFarmlandDistSq) {
+                                if (!com.x4yi.automata.compat.ClaimProtectionCompat.canModifyBlock(world, bot, cursor)) {
+                                    blacklistTarget(cursor, now);
+                                    continue;
+                                }
                                 result.emptyFarmlandDistSq = distSq;
                                 result.emptyFarmland = cursor.toImmutable();
                             }
@@ -316,6 +329,10 @@ public class FarmerJob implements IAutomatonJob {
                                 waterCache = collectNearbyWaterPositions(world, bounds);
                             }
                             if (hasHydrationInSet(waterCache, x, y, z) && distSq < result.emptyFarmlandDistSq) {
+                                if (!com.x4yi.automata.compat.ClaimProtectionCompat.canModifyBlock(world, bot, cursor)) {
+                                    blacklistTarget(cursor, now);
+                                    continue;
+                                }
                                 result.emptyFarmlandDistSq = distSq;
                                 result.emptyFarmland = cursor.toImmutable();
                             }
@@ -329,6 +346,10 @@ public class FarmerJob implements IAutomatonJob {
                             waterCache = collectNearbyWaterPositions(world, bounds);
                         }
                         if (hasHydrationInSet(waterCache, x, y, z) && distSq < result.tillableDistSq) {
+                            if (!com.x4yi.automata.compat.ClaimProtectionCompat.canModifyBlock(world, bot, cursor)) {
+                                blacklistTarget(cursor, now);
+                                continue;
+                            }
                             result.tillableDistSq = distSq;
                             result.tillableSoil = cursor.toImmutable();
                         }
@@ -339,6 +360,10 @@ public class FarmerJob implements IAutomatonJob {
                             && block instanceof BlockCrops crops
                             && !crops.isMaxAge(state)
                             && distSq < result.growableDistSq) {
+                        if (!com.x4yi.automata.compat.ClaimProtectionCompat.canModifyBlock(world, bot, cursor)) {
+                            blacklistTarget(cursor, now);
+                            continue;
+                        }
                         result.growableDistSq = distSq;
                         result.growableCrop = cursor.toImmutable();
                     }
@@ -348,8 +373,10 @@ public class FarmerJob implements IAutomatonJob {
         return result;
     }
 
-    private static Set<Long> collectNearbyWaterPositions(WorldServer world, JobBlockSupport.AreaBounds bounds) {
-        Set<Long> waterPositions = new HashSet<>();
+    private static it.unimi.dsi.fastutil.longs.LongOpenHashSet collectNearbyWaterPositions(
+            WorldServer world,
+            JobBlockSupport.AreaBounds bounds) {
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet waterPositions = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         int minX = bounds.minX() - 4;
         int maxX = bounds.maxX() + 4;
@@ -371,7 +398,7 @@ public class FarmerJob implements IAutomatonJob {
         return waterPositions;
     }
 
-    private static boolean hasHydrationInSet(Set<Long> waterPositions, int x, int y, int z) {
+    private static boolean hasHydrationInSet(it.unimi.dsi.fastutil.longs.LongOpenHashSet waterPositions, int x, int y, int z) {
         if (waterPositions.isEmpty()) {
             return false;
         }

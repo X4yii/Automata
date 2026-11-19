@@ -28,7 +28,6 @@ public class CourierJob implements IAutomatonJob {
 
     @Override
     public void tick(IAutomatonContext publicCtx) {
-        // CourierJob is currently in design; mechanic intentionally disabled for v1.0.0.
         AutomatonAIContext ctx = AutomataAPI.requireInternalContext(publicCtx);
         ctx.stopNavigation();
     }

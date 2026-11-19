@@ -6,6 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import javax.annotation.Nullable;
 
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.block.Block;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.item.ItemBlock;
@@ -25,6 +26,7 @@ import com.x4yi.automata.api.AutomataAPI;
 import com.x4yi.automata.api.AutomatonBuiltInJobs;
 import com.x4yi.automata.api.IAutomatonContext;
 import com.x4yi.automata.entity.EntityAutomaton;
+import com.x4yi.automata.navigation.PackedPos;
 import com.x4yi.automata.world.FakePlayerService;
 
 public class LumberjackJob implements IAutomatonJob {
@@ -33,9 +35,13 @@ public class LumberjackJob implements IAutomatonJob {
     private static final int[] QUAD_DZ = {0, 0, 1, 1};
     private static final long UNREACHABLE_TTL_TICKS = 80L;
     private static final int MAX_PILLAR_ATTEMPTS = 3;
+    private static final long STAGNATION_REBUILD_TICKS = 40L;
+    private static final double STAGNATION_RADIUS_SQ = 9.0D;
     private static final Map<Block, Boolean> LOG_BLOCK_CACHE = new ConcurrentHashMap<>();
 
     private final AreaBlacklistTracker blacklistTracker = new AreaBlacklistTracker(UNREACHABLE_TTL_TICKS);
+    private final BlockWorkQueue treeQueue = new BlockWorkQueue(BlockWorkQueue.DEFAULT_CAPACITY);
+    private final BlockPos.MutableBlockPos scratchPos = new BlockPos.MutableBlockPos();
 
     @Nullable
     private BlockPos cachedTarget;
@@ -43,10 +49,34 @@ public class LumberjackJob implements IAutomatonJob {
     private int activeTreeZ = Integer.MIN_VALUE;
     private long pillarTargetKey = Long.MIN_VALUE;
     private int pillarAttempts;
+    private long nextFullScanTick = Long.MIN_VALUE;
+    private boolean lastScanSawUnblockedLog;
+    private double anchorX;
+    private double anchorY;
+    private double anchorZ;
+    private long lastProgressTick = Long.MIN_VALUE;
 
     @Override
     public ResourceLocation getJobId() {
         return AutomatonBuiltInJobs.LUMBERJACK;
+    }
+
+    @Override
+    public boolean hasCommittedWork(IAutomatonContext ctx) {
+        return cachedTarget != null || !treeQueue.isEmpty();
+    }
+
+    @Override
+    public int copyPlannedBreakTargets(long[] dest, int maxCount) {
+        int written = 0;
+        int limit = Math.min(maxCount, dest.length);
+        if (cachedTarget != null && written < limit) {
+            dest[written++] = PackedPos.pack(cachedTarget.getX(), cachedTarget.getY(), cachedTarget.getZ());
+        }
+        if (written < limit) {
+            written += treeQueue.copyTo(dest, written, limit - written);
+        }
+        return written;
     }
 
     @Override
@@ -57,10 +87,14 @@ public class LumberjackJob implements IAutomatonJob {
             cachedTarget = null;
         }
         blacklistTracker.clear();
+        treeQueue.clear();
         activeTreeX = Integer.MIN_VALUE;
         activeTreeZ = Integer.MIN_VALUE;
         pillarTargetKey = Long.MIN_VALUE;
         pillarAttempts = 0;
+        nextFullScanTick = Long.MIN_VALUE;
+        lastScanSawUnblockedLog = false;
+        lastProgressTick = Long.MIN_VALUE;
     }
 
     @Override
@@ -69,6 +103,28 @@ public class LumberjackJob implements IAutomatonJob {
         EntityAutomaton bot = ctx.getAutomaton();
         WorldServer world = ctx.getWorld();
         long now = ctx.getWorldTime();
+
+        if (lastProgressTick == Long.MIN_VALUE
+                || ctx.getMiningController().isMining()
+                || bot.getDistanceSq(anchorX, anchorY, anchorZ) > STAGNATION_RADIUS_SQ) {
+            anchorX = bot.posX;
+            anchorY = bot.posY;
+            anchorZ = bot.posZ;
+            lastProgressTick = now;
+        }
+        if ((now - lastProgressTick) >= STAGNATION_REBUILD_TICKS) {
+            if (cachedTarget != null) {
+                blacklistTarget(cachedTarget, now);
+                JobBlockSupport.release(ctx, cachedTarget);
+                cachedTarget = null;
+            }
+            treeQueue.clear();
+            nextFullScanTick = now;
+            anchorX = bot.posX;
+            anchorY = bot.posY;
+            anchorZ = bot.posZ;
+            lastProgressTick = now;
+        }
         if (cachedTarget != null && ctx.getMovement().getLastStuckGoal() != Long.MIN_VALUE) {
             ctx.getMovement().clearLastStuckGoal();
             blacklistTarget(cachedTarget, now);
@@ -79,7 +135,7 @@ public class LumberjackJob implements IAutomatonJob {
         JobBlockSupport.AreaBounds bounds = JobBlockSupport.resolveBounds(ctx.getTaskConfig(), bot.getPosition(), 8);
         BlockPos logPos = resolveOrFindLog(ctx, bounds, now);
         if (logPos == null) {
-            if (!hasAnyUnblockedLog(world, bounds, now)) {
+            if (now >= nextFullScanTick && !lastScanSawUnblockedLog && !hasAnyUnblockedLog(world, bounds, now)) {
                 TaskCompletionService.completeTask(ctx, "Lumberjack");
             }
             return;
@@ -146,6 +202,7 @@ public class LumberjackJob implements IAutomatonJob {
                 && !isLogBlock(world.getBlockState(logPos.down()));
         if (JobBlockSupport.breakBlockWithBestTool(ctx, logPos)) {
             cachedTarget = null;
+            lastProgressTick = now;
             if (hadSoilBelow && world.isAirBlock(logPos)) {
                 JobBlockSupport.useMatchingInventoryItemOnFace(
                         ctx, logPos.down(), EnumFacing.UP, stack -> JobBlockSupport.matchesOreDict(stack, "treeSapling"));
@@ -185,9 +242,85 @@ public class LumberjackJob implements IAutomatonJob {
             JobBlockSupport.release(ctx, cachedTarget);
             cachedTarget = null;
         }
+        long queued = treeQueue.pollNextValid(packed -> {
+            scratchPos.setPos(PackedPos.unpackX(packed), PackedPos.unpackY(packed), PackedPos.unpackZ(packed));
+            return !isBlacklisted(scratchPos, now) && isLogTargetValid(ctx, bounds, scratchPos);
+        });
+        if (queued != Long.MIN_VALUE) {
+            cachedTarget = new BlockPos(
+                    PackedPos.unpackX(queued),
+                    PackedPos.unpackY(queued),
+                    PackedPos.unpackZ(queued));
+            return cachedTarget;
+        }
+        if (now < nextFullScanTick) {
+            return null;
+        }
         BlockPos found = findBestLogTarget(ctx, bounds, now);
+        if (found == null) {
+            nextFullScanTick = now + 20L;
+        } else {
+            enqueueConnectedTreeLogs(ctx, bounds, found, now);
+        }
         cachedTarget = found;
         return found;
+    }
+
+    private void enqueueConnectedTreeLogs(
+            AutomatonAIContext ctx,
+            JobBlockSupport.AreaBounds bounds,
+            BlockPos root,
+            long now) {
+        treeQueue.clear();
+        WorldServer world = ctx.getWorld();
+        LongOpenHashSet visited = new LongOpenHashSet();
+        long rootPacked = PackedPos.pack(root.getX(), root.getY(), root.getZ());
+        visited.add(rootPacked);
+        long[] bfs = new long[128];
+        int head = 0;
+        int tail = 0;
+        bfs[tail++] = rootPacked;
+        while (head < tail && !treeQueue.isFull()) {
+            long cur = bfs[head++];
+            int cx = PackedPos.unpackX(cur);
+            int cy = PackedPos.unpackY(cur);
+            int cz = PackedPos.unpackZ(cur);
+            for (int dy = -1; dy <= 1; dy++) {
+                int ny = cy + dy;
+                if (ny < bounds.minY() || ny > bounds.maxY()) {
+                    continue;
+                }
+                for (int dx = -1; dx <= 1; dx++) {
+                    int nx = cx + dx;
+                    if (nx < bounds.minX() || nx > bounds.maxX()) {
+                        continue;
+                    }
+                    for (int dz = -1; dz <= 1; dz++) {
+                        if (dx == 0 && dy == 0 && dz == 0) {
+                            continue;
+                        }
+                        int nz = cz + dz;
+                        if (nz < bounds.minZ() || nz > bounds.maxZ()) {
+                            continue;
+                        }
+                        long nPacked = PackedPos.pack(nx, ny, nz);
+                        if (!visited.add(nPacked)) {
+                            continue;
+                        }
+                        scratchPos.setPos(nx, ny, nz);
+                        if (isBlacklisted(scratchPos, now)
+                                || !world.isBlockLoaded(scratchPos)
+                                || !isLogBlock(world.getBlockState(scratchPos))) {
+                            continue;
+                        }
+                        treeQueue.append(nPacked);
+                        if (tail < bfs.length) {
+                            bfs[tail++] = nPacked;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private static boolean isLogTargetValid(AutomatonAIContext ctx, JobBlockSupport.AreaBounds bounds, BlockPos pos) {
@@ -201,6 +334,9 @@ public class LumberjackJob implements IAutomatonJob {
             return false;
         }
         if (!isLogBlock(world.getBlockState(pos))) {
+            return false;
+        }
+        if (!com.x4yi.automata.compat.ClaimProtectionCompat.canModifyBlock(world, ctx.getAutomaton(), pos)) {
             return false;
         }
         return !ctx.getBlackboard().isReservedByOther(ctx.getAutomaton().getEntityId(), pos, ctx.getWorldTime())
@@ -246,6 +382,7 @@ public class LumberjackJob implements IAutomatonJob {
             long now) {
         BlockPos best = null;
         double bestScore = Double.MAX_VALUE;
+        lastScanSawUnblockedLog = false;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (int y = bounds.minY(); y <= bounds.maxY(); y++) {
             for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
@@ -257,6 +394,7 @@ public class LumberjackJob implements IAutomatonJob {
                     if (!isLogBlock(world.getBlockState(cursor))) {
                         continue;
                     }
+                    lastScanSawUnblockedLog = true;
                     double score = y * 4.0D + Math.sqrt(bot.getDistanceSqToCenter(cursor));
                     if (activeTreeX != Integer.MIN_VALUE
                             && Math.abs(x - activeTreeX) <= 2
@@ -470,9 +608,15 @@ public class LumberjackJob implements IAutomatonJob {
             return false;
         }
         Block block = state.getBlock();
-        return LOG_BLOCK_CACHE.computeIfAbsent(block, b -> {
-            ItemStack stack = new ItemStack(b, 1, b.getMetaFromState(state));
-            return JobBlockSupport.matchesOreDict(stack, "logWood");
-        });
+        Boolean cached = LOG_BLOCK_CACHE.get(block);
+        if (cached != null) {
+            return cached;
+        }
+        ItemStack stack = new ItemStack(block, 1, block.getMetaFromState(state));
+        boolean isLog = JobBlockSupport.matchesOreDict(stack, "logWood");
+        if (LOG_BLOCK_CACHE.size() < 1024) {
+            LOG_BLOCK_CACHE.putIfAbsent(block, isLog);
+        }
+        return isLog;
     }
 }

@@ -1,5 +1,6 @@
 package com.x4yi.automata.ai.jobs;
 
+import java.util.List;
 import java.util.UUID;
 
 import javax.annotation.Nullable;
@@ -25,7 +26,7 @@ import com.x4yi.automata.compat.SpartanWeaponryCompat;
 import com.x4yi.automata.entity.EntityAutomaton;
 import com.x4yi.automata.world.FakePlayerService;
 
-final class RangedCombatController {
+public final class RangedCombatController {
 
     private static final double ATTACK_RANGE_SQ = 9.0D;
     private static final double BOW_IDEAL_RANGE_SQ = 1024.0D;
@@ -42,8 +43,8 @@ final class RangedCombatController {
             CombatJobSupport.CombatTacticsState state,
             double distSq,
             long now) {
-        ctx.stopNavigation();
         if (distSq <= ATTACK_RANGE_SQ && isCorneredFromTarget(ctx, bot, target)) {
+            ctx.stopNavigation();
             bot.resetActiveHand();
             state.bowChargeStartTick = -1L;
             ctx.getMovement().lookSmoothlyAt(target.posX, target.posY + target.getEyeHeight(), target.posZ);
@@ -66,6 +67,13 @@ final class RangedCombatController {
             if (bot.isHandActive()) {
                 bot.resetActiveHand();
             }
+            if (distSq > 9.0D) {
+                BlockPos droppedPos = SpartanWeaponryCompat.findNearestOwnedDroppedWeaponPos(bot, 18.0D);
+                if (droppedPos != null && !ctx.isGoalOnCooldown(droppedPos, now)) {
+                    ctx.requestPathTo(droppedPos, true);
+                    return;
+                }
+            }
             EquipmentSelector.equipBestWeapon(bot);
             return;
         }
@@ -73,17 +81,39 @@ final class RangedCombatController {
         if (profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.BOOMERANG_SKIRMISHER
                 && (SpartanWeaponryCompat.getRemainingThrowingAmmo(held) <= 0
                         || SpartanWeaponryCompat.hasBoomerangInFlight(bot))) {
-            // Boomerang is currently in flight waiting to return; kite at medium range without spamming throw.
             if (bot.isHandActive()) {
                 bot.resetActiveHand();
             }
             state.bowChargeStartTick = -1L;
+            if (!SpartanWeaponryCompat.hasBoomerangInFlight(bot)) {
+                BlockPos droppedPos = SpartanWeaponryCompat.findNearestOwnedDroppedWeaponPos(bot, 24.0D);
+                if (droppedPos != null && !ctx.isGoalOnCooldown(droppedPos, now)) {
+                    ctx.requestPathTo(droppedPos, true);
+                    return;
+                }
+            }
+            ctx.stopNavigation();
             ctx.getMovement().lookSmoothlyAt(target.posX, target.posY + target.getEyeHeight(), target.posZ);
             float fwd = distSq < 100.0D ? -0.95F : (distSq > 484.0D ? 0.65F : 0.0F);
             MeleeCombatController.applyCombatStrafe(ctx, bot, target, state, fwd, state.strafeDir * 0.85F, true, now);
             return;
         }
 
+        if (now < state.bowCooldownUntilTick) {
+            if (distSq < 81.0D) {
+                BlockPos kiteGoal = computeKiteEscapePos(ctx, bot, target);
+                if (kiteGoal != null) {
+                    ctx.requestPathTo(kiteGoal, true);
+                    return;
+                }
+            }
+            ctx.stopNavigation();
+            float fwd = distSq < 100.0D ? -0.95F : 0.0F;
+            MeleeCombatController.applyCombatStrafe(ctx, bot, target, state, fwd, state.strafeDir * 0.75F, true, now);
+            return;
+        }
+
+        ctx.stopNavigation();
         if (distSq < 100.0D) {
             MeleeCombatController.applyCombatStrafe(ctx, bot, target, state, -0.95F, state.strafeDir * 0.70F, true, now);
         } else if (profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.BOOMERANG_SKIRMISHER && distSq > 484.0D) {
@@ -94,11 +124,18 @@ final class RangedCombatController {
             applyArcherFlankPositioning(ctx, bot, target, state, distSq, now);
         }
 
+        boolean isCrossbow = profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.CROSSBOW_MARKSMAN;
+        boolean crossbowLoaded = isCrossbow && SpartanWeaponryCompat.isCrossbowLoaded(held);
+        double projectileSpeed = isCrossbow
+                ? SpartanWeaponryCompat.getCrossbowBoltSpeed(held) * 3.0D
+                : 3.0D;
+
         EntityLivingBase aimTarget = target;
         float[] ballistic = computeBowAimAngles(
                 bot.posX, bot.posY + 1.52D, bot.posZ,
                 aimTarget.posX, aimTarget.posY + aimTarget.height * 0.55D, aimTarget.posZ,
-                aimTarget.motionX, aimTarget.onGround ? 0.0D : aimTarget.motionY, aimTarget.motionZ);
+                aimTarget.motionX, aimTarget.onGround ? 0.0D : aimTarget.motionY, aimTarget.motionZ,
+                projectileSpeed);
 
         boolean obstructed = hasFriendlyInLineOfFire(ctx, bot, aimTarget)
                 || !isBowArcClear(ctx.getWorld(), bot, aimTarget);
@@ -110,15 +147,22 @@ final class RangedCombatController {
                 ballistic = computeBowAimAngles(
                         bot.posX, bot.posY + 1.52D, bot.posZ,
                         aimTarget.posX, aimTarget.posY + aimTarget.height * 0.55D, aimTarget.posZ,
-                        aimTarget.motionX, aimTarget.onGround ? 0.0D : aimTarget.motionY, aimTarget.motionZ);
+                        aimTarget.motionX, aimTarget.onGround ? 0.0D : aimTarget.motionY, aimTarget.motionZ,
+                        projectileSpeed);
             } else {
                 state.obstructedTicks++;
-                if (state.obstructedTicks > 30) {
+                if (state.obstructedTicks > 24) {
                     state.bowChargeStartTick = -1L;
                     if (bot.isHandActive()) {
                         bot.resetActiveHand();
                     }
-                    ctx.requestPathTo(aimTarget.getPosition(), true);
+                    BlockPos flankPos = computeLateralFiringPos(ctx, bot, aimTarget, state.strafeDir);
+                    if (flankPos != null) {
+                        ctx.requestPathTo(flankPos, true);
+                    } else {
+                        MeleeCombatController.applyCombatStrafe(
+                                ctx, bot, aimTarget, state, 0.0F, state.strafeDir * 1.0F, true, now);
+                    }
                     return;
                 }
                 MeleeCombatController.applyCombatStrafe(ctx, bot, aimTarget, state, 0.0F, state.strafeDir * 1.0F, true, now);
@@ -129,23 +173,26 @@ final class RangedCombatController {
             state.obstructedTicks = 0;
         }
 
-        ctx.getMovement().snapLook(ballistic[0], ballistic[1]);
-
-        if (now < state.bowCooldownUntilTick) {
+        if (shouldHoldShotForCloseMeleeAlly(ctx, bot, aimTarget)) {
+            ctx.getMovement().snapLook(ballistic[0], ballistic[1]);
+            MeleeCombatController.applyCombatStrafe(ctx, bot, aimTarget, state, 0.0F, state.strafeDir * 0.85F, true, now);
             return;
         }
+
+        ctx.getMovement().snapLook(ballistic[0], ballistic[1]);
+
         if (state.bowChargeStartTick < 0L) {
             state.bowChargeStartTick = now;
             bot.setActiveHand(EnumHand.MAIN_HAND);
             return;
         }
         long chargeNeeded = profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.BOW_MARKSMAN
-                ? BOW_CHARGE_TICKS
+                ? (distSq < 36.0D ? 12L : BOW_CHARGE_TICKS)
                 : Math.max(6L, profile.getRangedChargeTicks());
-        boolean isCrossbow = profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.CROSSBOW_MARKSMAN;
-        boolean crossbowLoaded = isCrossbow && SpartanWeaponryCompat.isCrossbowLoaded(held);
         if (isCrossbow) {
-            chargeNeeded = crossbowLoaded ? 2L : 35L;
+            chargeNeeded = crossbowLoaded
+                    ? Math.max(2L, SpartanWeaponryCompat.getCrossbowAimTicks(held))
+                    : Math.max(10L, SpartanWeaponryCompat.getCrossbowReloadTicks(held));
         }
         if (now - state.bowChargeStartTick >= chargeNeeded) {
             bot.motionX = 0.0D;
@@ -155,16 +202,26 @@ final class RangedCombatController {
             if (isCrossbow) {
                 int boltSlot = crossbowLoaded ? -1 : findBoltSlot(bot);
                 FakePlayerService.fireOrLoadCrossbow(
-                        ctx.getWorld(), bot, bot.getInventory().getCombinedInventory(), boltSlot, 40);
+                        ctx.getWorld(), bot, bot.getInventory().getCombinedInventory(), boltSlot, (int) chargeNeeded);
                 state.bowChargeStartTick = -1L;
-                state.bowCooldownUntilTick = now + (crossbowLoaded ? 6L : 4L);
+                state.bowCooldownUntilTick = now + (crossbowLoaded ? (distSq < 81.0D ? 12L : 6L) : 4L);
             } else {
-                int ammoSlot = profile.isRangedSkirmishStyle() ? -1 : findArrowSlot(bot);
-                FakePlayerService.releaseBowShot(
-                        ctx.getWorld(), bot, bot.getInventory().getCombinedInventory(), ammoSlot, (int) chargeNeeded);
+                int ammoSlot = com.x4yi.automata.compat.ModdedWeaponCompat.findNoCubesAmmoSlot(bot, held);
+                if (ammoSlot == -3 || ammoSlot == -1 && !com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesSelfAmmo(held)
+                        && !com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesZeroAmmoWeapon(held)) {
+                    ammoSlot = profile.isRangedSkirmishStyle() ? -1 : findArrowSlot(bot);
+                }
+                if (ammoSlot != -2) {
+                    FakePlayerService.releaseBowShot(
+                            ctx.getWorld(), bot, bot.getInventory().getCombinedInventory(), ammoSlot, (int) chargeNeeded);
+                }
                 state.bowChargeStartTick = -1L;
-                state.bowCooldownUntilTick = now
-                        + (profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.BOOMERANG_SKIRMISHER ? 10L : 6L);
+                long postShotCooldown = profile.getStyle() == WeaponCombatProfile.WeaponCombatStyle.BOOMERANG_SKIRMISHER
+                        ? 10L
+                        : (com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesTickRangedWeapon(held)
+                                ? 4L
+                                : (distSq < 81.0D ? 14L : 6L));
+                state.bowCooldownUntilTick = now + postShotCooldown;
             }
             MeleeCombatController.tryContextualStrafeJump(ctx, bot, aimTarget, state);
         }
@@ -181,12 +238,8 @@ final class RangedCombatController {
         double sumX = 0.0D;
         double sumZ = 0.0D;
         int meleeCount = 0;
-        UUID ownerUuid = bot.getOwnerUuid();
         for (EntityAutomaton ally : bot.world.getEntitiesWithinAABB(EntityAutomaton.class, meleeBox)) {
-            if (ally == bot || !ally.isEntityAlive() || ally.isDowned()) {
-                continue;
-            }
-            if (ownerUuid != null && !ownerUuid.equals(ally.getOwnerUuid())) {
+            if (ally == bot || !ally.isEntityAlive() || ally.isDowned() || !bot.isAlliedWith(ally)) {
                 continue;
             }
             if (!(ally.getHeldItemMainhand().getItem() instanceof ItemBow)) {
@@ -215,7 +268,14 @@ final class RangedCombatController {
             double startX, double startY, double startZ,
             double targetX, double targetY, double targetZ,
             double velX, double velY, double velZ) {
-        double speed = 3.0D;
+        return computeBowAimAngles(startX, startY, startZ, targetX, targetY, targetZ, velX, velY, velZ, 3.0D);
+    }
+
+    static float[] computeBowAimAngles(
+            double startX, double startY, double startZ,
+            double targetX, double targetY, double targetZ,
+            double velX, double velY, double velZ,
+            double speed) {
         double gravity = 0.05D;
         double drag = 0.99D;
         double oneMinusDrag = 1.0D - drag;
@@ -287,20 +347,13 @@ final class RangedCombatController {
     }
 
     private static boolean hasFriendlyInLineOfFire(AutomatonAIContext ctx, EntityAutomaton bot, EntityLivingBase target) {
-        AxisAlignedBB box = bot.getEntityBoundingBox()
-                .union(target.getEntityBoundingBox())
-                .grow(1.5D);
-        UUID ownerUuid = bot.getOwnerUuid();
-        for (EntityLivingBase entity : bot.world.getEntitiesWithinAABB(EntityLivingBase.class, box)) {
+        List<EntityLivingBase> friendlies = ctx.getNearbyFriendlies(32.0D);
+        for (int i = 0, n = friendlies.size(); i < n; i++) {
+            EntityLivingBase entity = friendlies.get(i);
             if (entity == bot || entity == target || !entity.isEntityAlive()) {
                 continue;
             }
             if (entity instanceof EntityAutomaton ally && ally.isDowned()) {
-                continue;
-            }
-            boolean friendly = (entity instanceof EntityPlayer player && ownerUuid != null && ownerUuid.equals(player.getUniqueID()))
-                    || (entity instanceof EntityAutomaton ally && ownerUuid != null && ownerUuid.equals(ally.getOwnerUuid()));
-            if (!friendly) {
                 continue;
             }
             if (isPointNearSegment2D(
@@ -328,10 +381,14 @@ final class RangedCombatController {
             AutomatonAIContext ctx,
             EntityAutomaton bot,
             EntityLivingBase blockedTarget) {
-        AxisAlignedBB box = new AxisAlignedBB(bot.getPosition()).grow(64.0D, BOW_MAX_VERTICAL_RANGE, 64.0D);
+        if (((ctx.getWorldTime() + bot.getEntityId()) % 5L) != 0L) {
+            return null;
+        }
+        List<EntityLivingBase> living = ctx.getNearbyLivingEntities(32.0D);
         EntityLivingBase best = null;
         double bestDistSq = BOW_MAX_RANGE_SQ + BOW_MAX_VERTICAL_RANGE * BOW_MAX_VERTICAL_RANGE;
-        for (EntityLivingBase candidate : bot.world.getEntitiesWithinAABB(EntityLivingBase.class, box)) {
+        for (int i = 0, n = living.size(); i < n; i++) {
+            EntityLivingBase candidate = living.get(i);
             if (candidate == blockedTarget
                     || candidate instanceof EntityEnderman
                     || !CombatTargetingService.isValidCombatCandidate(ctx, candidate)
@@ -340,14 +397,65 @@ final class RangedCombatController {
             }
             double dSq = bot.getDistanceSq(candidate);
             if (dSq < bestDistSq
-                    && bot.canEntityBeSeen(candidate)
                     && !hasFriendlyInLineOfFire(ctx, bot, candidate)
+                    && ctx.canSeeEntityCached(candidate)
                     && isBowArcClear(ctx.getWorld(), bot, candidate)) {
                 bestDistSq = dSq;
                 best = candidate;
             }
         }
         return best;
+    }
+
+    @Nullable
+    static BlockPos computeLateralFiringPos(
+            AutomatonAIContext ctx,
+            EntityAutomaton bot,
+            EntityLivingBase target,
+            int strafeDir) {
+        double dx = bot.posX - target.posX;
+        double dz = bot.posZ - target.posZ;
+        double baseAngle = Math.atan2(dz, dx);
+        double stepAngle = (strafeDir >= 0 ? 1.0D : -1.0D) * (Math.PI * 0.36D);
+        double[] radii = {11.0D, 13.0D, 9.0D};
+        WorldServer world = ctx.getWorld();
+        int baseY = MathHelper.floor(bot.posY + 0.2D);
+        for (double r : radii) {
+            for (int sign = 0; sign < 2; sign++) {
+                double ang = baseAngle + (sign == 0 ? stepAngle : -stepAngle);
+                int tx = MathHelper.floor(target.posX + Math.cos(ang) * r);
+                int tz = MathHelper.floor(target.posZ + Math.sin(ang) * r);
+                BlockPos candidate = new BlockPos(tx, baseY, tz);
+                if (world.isBlockLoaded(candidate)
+                        && !world.getBlockState(candidate).getMaterial().blocksMovement()
+                        && world.getBlockState(candidate.down()).getMaterial().isSolid()) {
+                    return candidate;
+                }
+            }
+        }
+        return null;
+    }
+
+    static boolean shouldHoldShotForCloseMeleeAlly(
+            AutomatonAIContext ctx,
+            EntityAutomaton bot,
+            EntityLivingBase target) {
+        if (target.getHealth() > 40.0F || AdaptiveThreatAnalyzer.isBossOrHighThreat(target)) {
+            return false;
+        }
+        for (EntityLivingBase entity : ctx.getNearbyLivingEntities(32.0D)) {
+            if (!(entity instanceof EntityAutomaton ally)
+                    || ally == bot
+                    || !ally.isEntityAlive()
+                    || ally.isDowned()
+                    || !bot.isAlliedWith(ally)) {
+                continue;
+            }
+            if (ally.getHealthRatio() >= 0.45F && ally.getDistanceSq(target) <= 3.24D) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static boolean isPointNearSegment2D(
@@ -370,6 +478,19 @@ final class RangedCombatController {
         double dx = px - closestX;
         double dz = pz - closestZ;
         return dx * dx + dz * dz <= maxRadius * maxRadius;
+    }
+
+    public static boolean hasReadyRangedWeapon(EntityAutomaton bot) {
+        if (isReadyRangedItem(bot, bot.getHeldItemMainhand())) {
+            return true;
+        }
+        IItemHandlerModifiable inv = bot.getInventory().getCombinedInventory();
+        for (int i = 0; i < inv.getSlots(); i++) {
+            if (isReadyRangedItem(bot, inv.getStackInSlot(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static boolean equipBowIfReady(EntityAutomaton bot) {
@@ -406,14 +527,29 @@ final class RangedCombatController {
         if (SpartanWeaponryCompat.isThrowableWeapon(stack)) {
             return SpartanWeaponryCompat.getRemainingThrowingAmmo(stack) > 0;
         }
+        if (com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesRangedItem(stack)) {
+            int slot = com.x4yi.automata.compat.ModdedWeaponCompat.findNoCubesAmmoSlot(bot, stack);
+            if (slot >= 0 || slot == -1) {
+                return true;
+            }
+            if (slot == -2) {
+                return false;
+            }
+            return findArrowSlot(bot) >= 0;
+        }
+        if (com.x4yi.automata.compat.ModdedWeaponCompat.isNoCubesZeroAmmoWeapon(stack)) {
+            return false;
+        }
         return EquipmentSelector.isBowItem(stack) && findArrowSlot(bot) >= 0;
     }
+
+    static final long EXPLOSIVE_ARROW_WARN_COOLDOWN_TICKS = 1200L;
 
     static int findBoltSlot(EntityAutomaton bot) {
         IItemHandlerModifiable inv = bot.getInventory().getCombinedInventory();
         for (int i = 0; i < inv.getSlots(); i++) {
             ItemStack stack = inv.getStackInSlot(i);
-            if (SpartanWeaponryCompat.isBoltItem(stack)) {
+            if (SpartanWeaponryCompat.isBoltItem(stack) && !isExplosiveArrow(stack)) {
                 return i;
             }
         }
@@ -424,11 +560,88 @@ final class RangedCombatController {
         IItemHandlerModifiable inv = bot.getInventory().getCombinedInventory();
         for (int i = 0; i < inv.getSlots(); i++) {
             ItemStack stack = inv.getStackInSlot(i);
-            if (!stack.isEmpty() && stack.getItem() instanceof ItemArrow) {
+            if (!stack.isEmpty() && stack.getItem() instanceof ItemArrow && !isExplosiveArrow(stack)) {
                 return i;
             }
         }
         return -1;
+    }
+
+    static boolean isExplosiveArrow(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+        if (stack.getItem().getRegistryName() != null
+                && stack.getItem().getRegistryName().getPath().toLowerCase(java.util.Locale.ROOT).contains("explosive")) {
+            return true;
+        }
+        return stack.getItem().getClass().getSimpleName().toLowerCase(java.util.Locale.ROOT).contains("explosive");
+    }
+
+    static boolean hasOnlyExplosiveArrows(EntityAutomaton bot) {
+        if (findArrowSlot(bot) >= 0) {
+            return false;
+        }
+        IItemHandlerModifiable inv = bot.getInventory().getCombinedInventory();
+        for (int i = 0; i < inv.getSlots(); i++) {
+            ItemStack stack = inv.getStackInSlot(i);
+            if (!stack.isEmpty() && stack.getItem() instanceof ItemArrow && isExplosiveArrow(stack)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void warnIfOnlyExplosiveArrows(
+            AutomatonAIContext ctx,
+            EntityAutomaton bot,
+            CombatJobSupport.CombatTacticsState state,
+            long now) {
+        if (findArrowSlot(bot) >= 0) {
+            state.lastExplosiveArrowWarnTick = -1L;
+            return;
+        }
+        if (!hasOnlyExplosiveArrows(bot)) {
+            return;
+        }
+        CombatJobSupport.cancelBowDraw(ctx);
+        if (state.lastExplosiveArrowWarnTick >= 0L
+                && now - state.lastExplosiveArrowWarnTick < EXPLOSIVE_ARROW_WARN_COOLDOWN_TICKS) {
+            return;
+        }
+        state.lastExplosiveArrowWarnTick = now;
+        net.minecraft.entity.player.EntityPlayer owner = bot.getOwnerUuid() != null
+                ? ctx.getWorld().getPlayerEntityByUUID(bot.getOwnerUuid())
+                : null;
+        if (owner != null) {
+            owner.sendMessage(new net.minecraft.util.text.TextComponentTranslation(
+                    "message.automata.ranged_friendly_fire_warn",
+                    bot.getName()));
+        }
+    }
+
+    @javax.annotation.Nullable
+    static BlockPos computeKiteEscapePos(AutomatonAIContext ctx, EntityAutomaton bot, EntityLivingBase target) {
+        ThreatFieldEvaluator.ThreatAssessment threats = ThreatFieldEvaluator.assessLocalThreats(ctx, bot);
+        if (threats.hasEscapeVector()) {
+            BlockPos anchor = ThreatFieldEvaluator.findEscapeAnchor(ctx, bot, threats, 11.0D);
+            if (anchor != null) {
+                return anchor;
+            }
+        }
+        double dx = bot.posX - target.posX;
+        double dz = bot.posZ - target.posZ;
+        double len = Math.hypot(dx, dz);
+        if (len < 0.05D) {
+            return null;
+        }
+        int gx = net.minecraft.util.math.MathHelper.floor(bot.posX + (dx / len) * 10.0D);
+        int gz = net.minecraft.util.math.MathHelper.floor(bot.posZ + (dz / len) * 10.0D);
+        BlockPos candidate = new BlockPos(gx, Math.round(bot.posY), gz);
+        if (ctx.getWorld().isBlockLoaded(candidate)) {
+            return candidate;
+        }
+        return null;
     }
 }
 

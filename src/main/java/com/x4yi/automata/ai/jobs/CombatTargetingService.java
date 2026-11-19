@@ -26,6 +26,7 @@ import net.minecraft.util.math.BlockPos;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
 import com.x4yi.automata.ai.AutomatonTaskConfig;
+import com.x4yi.automata.compat.ModCompatBridge;
 import com.x4yi.automata.entity.EntityAutomaton;
 
 final class CombatTargetingService {
@@ -47,25 +48,38 @@ final class CombatTargetingService {
             double radius,
             Predicate<EntityLivingBase> extraFilter) {
         EntityAutomaton bot = ctx.getAutomaton();
+        long now = ctx.getWorldTime();
+        boolean centeredOnBot = center.distanceSq(bot.posX, bot.posY, bot.posZ) <= 4.0D;
+        if (centeredOnBot && ctx.hasCachedPrimaryTargetForTick(now, radius)) {
+            EntityLivingBase cached = ctx.getCachedPrimaryTarget(now, radius);
+            if (cached == null || (isValidCombatCandidate(ctx, cached) && extraFilter.test(cached))) {
+                return cached;
+            }
+        }
         List<EntityLivingBase> candidates;
-        if (radius <= 16.0D && center.distanceSq(bot.posX, bot.posY, bot.posZ) <= 4.0D) {
+        if (centeredOnBot) {
             candidates = ctx.getNearbyLivingEntities(radius);
         } else {
             AxisAlignedBB box = new AxisAlignedBB(center).grow(radius);
             candidates = bot.world.getEntitiesWithinAABB(EntityLivingBase.class, box);
         }
         boolean squadCoop = ctx.getTaskConfig().isSquadCooperation();
-        long now = ctx.getWorldTime();
 
-        List<EntityAutomaton> vulnerableAllies = new ArrayList<>();
-        List<EntityAutomaton> healthyAllies = new ArrayList<>();
-        if (squadCoop && bot.getOwnerUuid() != null) {
+        List<EntityAutomaton> vulnerableAllies = ctx.getScratchVulnerableAllies();
+        List<EntityAutomaton> healthyAllies = ctx.getScratchHealthyAllies();
+        double squadSumX = bot.posX;
+        double squadSumZ = bot.posZ;
+        int squadCount = 1;
+        if (squadCoop) {
             for (EntityLivingBase candidate : candidates) {
                 if (candidate instanceof EntityAutomaton ally
                         && ally != bot
                         && ally.isEntityAlive()
                         && !ally.isDowned()
-                        && bot.getOwnerUuid().equals(ally.getOwnerUuid())) {
+                        && bot.isAlliedWith(ally)) {
+                    squadSumX += ally.posX;
+                    squadSumZ += ally.posZ;
+                    squadCount++;
                     if (ally.isEating() || ally.getHealthRatio() < 0.50F) {
                         vulnerableAllies.add(ally);
                     } else {
@@ -74,6 +88,20 @@ final class CombatTargetingService {
                 }
             }
         }
+        double squadCenterX = squadSumX / squadCount;
+        double squadCenterZ = squadSumZ / squadCount;
+        com.x4yi.automata.ai.BotLoadoutProfile loadout = ctx.getLoadoutProfile();
+        WeaponCombatProfile botWeaponProfile = loadout.mainHandProfile();
+        boolean botIsRanged = loadout.hasReadyRangedWeapon()
+                && botWeaponProfile.getRole() == WeaponCombatProfile.CombatRole.RANGED;
+        boolean botIsVengeance = loadout.hasBookOfVengeance()
+                && botWeaponProfile.getRole() == WeaponCombatProfile.CombatRole.SPECIAL_CASTER;
+        CombatJobSupport.CombatTacticsState tacticsState = ctx.getCombatTacticsState();
+        int currentTargetId = tacticsState.activeTargetId;
+        boolean targetLocked = currentTargetId >= 0 && now < tacticsState.committedTargetUntilTick;
+        com.x4yi.automata.coordination.SquadBlackboard.ReviveAlert activeReviveAlert = squadCoop
+                ? ctx.getBlackboard().findNearestActiveReviveAlert(bot.getEntityId(), bot.getPosition(), 1024.0D, now)
+                : null;
 
         EntityLivingBase bestFree = null;
         double bestFreeScore = radius * radius;
@@ -84,28 +112,118 @@ final class CombatTargetingService {
             if (!isValidCombatCandidate(ctx, candidate) || !extraFilter.test(candidate)) {
                 continue;
             }
+            if (candidate.getEntityId() == tacticsState.unreachableEntityId && now < tacticsState.unreachableUntilTick) {
+                continue;
+            }
             double distSq = bot.getDistanceSq(candidate);
-            boolean primedCreeper = candidate instanceof EntityCreeper creeper
-                    && creeper.getCreeperState() > 0
+            boolean isRecentRevenge = candidate == bot.getRevengeTarget();
+            boolean aggroOnTeam = isTargetingTeam(candidate, bot);
+            boolean goalOnCooldown = ctx.isGoalOnCooldown(candidate.getPosition(), now);
+            double dyAbs = Math.abs(candidate.posY - bot.posY);
+            if (!shouldConsiderVisibilityAndAccess(
+                    true,
+                    aggroOnTeam,
+                    isRecentRevenge,
+                    distSq,
+                    dyAbs,
+                    goalOnCooldown)) {
+                continue;
+            }
+            boolean primedCreeper = ((candidate instanceof EntityCreeper creeper && creeper.getCreeperState() > 0)
+                    || ModCompatBridge.isImminentSwellingExplosive(candidate))
                     && distSq <= CREEPER_PRIORITY_RADIUS_SQ;
             boolean threatensVulnerable = !vulnerableAllies.isEmpty()
                     && isThreateningAnyAlly(candidate, vulnerableAllies, ALLY_PROTECT_RADIUS_SQ);
+            if (activeReviveAlert != null
+                    && !threatensVulnerable
+                    && !primedCreeper
+                    && candidate.getDistanceSqToCenter(activeReviveAlert.pos()) > 256.0D) {
+                continue;
+            }
             boolean threatensHealthy = !healthyAllies.isEmpty()
                     && isThreateningAnyAlly(candidate, healthyAllies, HEALTHY_ALLY_PROTECT_RADIUS_SQ);
-            boolean rangedThreat = AdaptiveThreatAnalyzer.isRangedOrSpecialThreat(candidate)
-                    && bot.canEntityBeSeen(candidate);
-            boolean aerial = AdaptiveThreatAnalyzer.isAerialThreat(bot, candidate);
-            boolean bossOrHigh = AdaptiveThreatAnalyzer.isBossOrHighThreat(candidate);
-            boolean srp = AdaptiveThreatAnalyzer.isSrpParasite(candidate);
-            double score = computeTacticalTargetScore(
-                    distSq, primedCreeper, threatensVulnerable, threatensHealthy, rangedThreat)
-                    * AdaptiveThreatAnalyzer.computeThreatPriorityMultiplier(
-                            false, aerial, false, bossOrHigh, srp);
+            boolean isRangedOrSpecial = AdaptiveThreatAnalyzer.isRangedOrSpecialThreat(candidate);
+            AdaptiveThreatAnalyzer.ThreatProfile threatProfile = squadCoop
+                    ? ctx.getBlackboard().getOrComputeThreatProfile(
+                            candidate.getEntityId(), now, 10L, () -> AdaptiveThreatAnalyzer.analyzeThreat(bot, candidate))
+                    : AdaptiveThreatAnalyzer.analyzeThreat(bot, candidate);
+            ModCompatBridge.TacticalDirective directive = ModCompatBridge.resolveTacticalDirective(candidate);
+            double baseScore = computeTacticalTargetScore(
+                    distSq, primedCreeper, threatensVulnerable, threatensHealthy, false)
+                    * threatProfile.priorityMultiplier()
+                    * directive.threatWeightMultiplier()
+                    * botWeaponProfile.computeRoleAffinityMultiplier(threatProfile, candidate.getHealth());
+            if (loadout.isUnarmedOrSupportOnly() && candidate != bot.getRevengeTarget()) {
+                baseScore *= 3.5D;
+            }
+            if (squadCoop) {
+                baseScore *= ctx.getBlackboard().getPriorityMultiplier(candidate.getEntityId(), now);
+                if (threatensVulnerable) {
+                    ctx.getBlackboard().reportPriorityTarget(bot.getEntityId(), candidate.getEntityId(), 0.35D, now, 30L);
+                }
+                if (activeReviveAlert != null && candidate.getDistanceSqToCenter(activeReviveAlert.pos()) <= 64.0D) {
+                    baseScore *= 0.20D;
+                }
+            }
+            if (squadCount > 1) {
+                double dxSquad = candidate.posX - squadCenterX;
+                double dzSquad = candidate.posZ - squadCenterZ;
+                double distSquadSq = dxSquad * dxSquad + dzSquad * dzSquad;
+                if (distSquadSq > 100.0D && !directive.highPriorityFocus() && !threatProfile.has(AdaptiveThreatAnalyzer.ThreatTrait.BOSS_TIER)) {
+                    baseScore *= 4.0D;
+                }
+            }
+            if (botIsVengeance
+                    && squadCoop
+                    && candidate.getHealth() <= 55.0F
+                    && !threatProfile.has(AdaptiveThreatAnalyzer.ThreatTrait.BOSS_TIER)
+                    && ctx.getBlackboard().isVengeanceSlamClaimedByOther(bot.getEntityId(), candidate.getEntityId(), now)) {
+                baseScore *= 6.0D;
+            }
+            if (candidate.getEntityId() == currentTargetId && !primedCreeper) {
+                baseScore *= targetLocked ? 0.45D : 0.72D;
+            }
 
+            int meleeOnTarget = squadCoop
+                    ? ctx.getBlackboard().getAssignedMeleeCount(candidate.getEntityId(), bot.getEntityId(), botIsRanged ? 0.0D : distSq, now)
+                    : 0;
+            boolean rangedYieldsToMelee = botIsRanged
+                    && meleeOnTarget > 0
+                    && !threatProfile.has(AdaptiveThreatAnalyzer.ThreatTrait.BOSS_TIER)
+                    && !threatProfile.has(AdaptiveThreatAnalyzer.ThreatTrait.AERIAL)
+                    && candidate.getHealth() <= 40.0F;
+            if (rangedYieldsToMelee) {
+                baseScore *= 2.2D;
+            }
+            boolean slotSaturated = !botIsRanged && meleeOnTarget >= threatProfile.recommendedMeleeSlots();
+            boolean turnBusy = !botIsRanged && ctx.getBlackboard().isTurnHeldByOther(bot.getEntityId(), candidate.getEntityId(), now);
             boolean contested = squadCoop
                     && !primedCreeper
                     && !threatensVulnerable
-                    && ctx.getBlackboard().isTurnHeldByOther(bot.getEntityId(), candidate.getEntityId(), now);
+                    && !threatProfile.has(AdaptiveThreatAnalyzer.ThreatTrait.BOSS_TIER)
+                    && !directive.highPriorityFocus()
+                    && (slotSaturated || turnBusy || rangedYieldsToMelee);
+
+            double optimisticScore = isRangedOrSpecial ? baseScore * RANGED_THREAT_WEIGHT : baseScore;
+            if (contested) {
+                if (bestFree != null || optimisticScore >= bestContestedScore) {
+                    continue;
+                }
+            } else if (optimisticScore >= bestFreeScore) {
+                continue;
+            }
+
+            boolean canSee = ctx.canSeeEntityCached(candidate);
+            if (!shouldConsiderVisibilityAndAccess(
+                    canSee,
+                    aggroOnTeam,
+                    isRecentRevenge,
+                    distSq,
+                    dyAbs,
+                    goalOnCooldown)) {
+                continue;
+            }
+            double score = (isRangedOrSpecial && canSee) ? baseScore * RANGED_THREAT_WEIGHT : baseScore;
             if (contested) {
                 if (score < bestContestedScore) {
                     bestContestedScore = score;
@@ -116,7 +234,11 @@ final class CombatTargetingService {
                 bestFree = candidate;
             }
         }
-        return bestFree != null ? bestFree : bestContested;
+        EntityLivingBase result = bestFree != null ? bestFree : bestContested;
+        if (centeredOnBot) {
+            ctx.cachePrimaryTarget(now, radius, result);
+        }
+        return result;
     }
 
     static double computeTacticalTargetScore(
@@ -138,6 +260,42 @@ final class CombatTargetingService {
             score *= RANGED_THREAT_WEIGHT;
         }
         return score;
+    }
+
+    static boolean shouldConsiderVisibilityAndAccess(
+            boolean canBotSee,
+            boolean isAggroOnTeam,
+            boolean isRecentRevenge,
+            double distSq,
+            double absDy,
+            boolean targetGoalOnCooldown) {
+        if (targetGoalOnCooldown) {
+            return false;
+        }
+        if (canBotSee) {
+            return true;
+        }
+        if (isRecentRevenge || isAggroOnTeam) {
+            return distSq <= 256.0D && absDy <= 6.0D;
+        }
+        return distSq <= 25.0D && absDy <= 2.5D;
+    }
+
+    private static boolean isTargetingTeam(EntityLivingBase candidate, EntityAutomaton bot) {
+        if (!(candidate instanceof EntityLiving living)) {
+            return false;
+        }
+        EntityLivingBase attackTarget = living.getAttackTarget();
+        if (attackTarget == null) {
+            return false;
+        }
+        if (attackTarget == bot) {
+            return true;
+        }
+        if (attackTarget instanceof EntityAutomaton ally && bot.isAlliedWith(ally)) {
+            return true;
+        }
+        return bot.getOwnerUuid() != null && bot.getOwnerUuid().equals(attackTarget.getUniqueID());
     }
 
     private static boolean isThreateningAnyAlly(EntityLivingBase enemy, List<EntityAutomaton> allies, double radiusSq) {
@@ -170,6 +328,9 @@ final class CombatTargetingService {
             if (ownerUuid != null && ownerUuid.equals(ally.getOwnerUuid())) {
                 return false;
             }
+        }
+        if (ModCompatBridge.isNonTargetableHazard(candidate)) {
+            return false;
         }
         AutomatonTaskConfig config = ctx.getTaskConfig();
         if (!passesEntityFilter(config, candidate)) {

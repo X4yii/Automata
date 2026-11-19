@@ -1,8 +1,6 @@
 package com.x4yi.automata.ai.jobs;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 import javax.annotation.Nullable;
 
@@ -15,6 +13,7 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.WorldServer;
 
 import com.x4yi.automata.ai.AutomatonAIContext;
+import com.x4yi.automata.compat.ModCompatBridge;
 import com.x4yi.automata.entity.EntityAutomaton;
 
 public final class ThreatFieldEvaluator {
@@ -26,29 +25,71 @@ public final class ThreatFieldEvaluator {
 
     public static ThreatAssessment assessLocalThreats(AutomatonAIContext ctx, EntityAutomaton bot) {
         List<EntityLivingBase> nearby = ctx.getNearbyLivingEntities(DEFAULT_SCAN_RADIUS);
-        List<double[]> enemies = new ArrayList<>();
-        List<double[]> allies = new ArrayList<>();
-        UUID ownerUuid = bot.getOwnerUuid();
         double maxDistSq = DEFAULT_SCAN_RADIUS * DEFAULT_SCAN_RADIUS;
+        double repulseX = 0.0D;
+        double repulseZ = 0.0D;
+        int occupiedMask = 0;
+        int closeCount = 0;
+        int enemyCount = 0;
 
-        for (EntityLivingBase entity : nearby) {
+        double allySumX = 0.0D;
+        double allySumZ = 0.0D;
+        int allyCount = 0;
+
+        for (int i = 0, n = nearby.size(); i < n; i++) {
+            EntityLivingBase entity = nearby.get(i);
             if (entity == bot || !entity.isEntityAlive() || bot.getDistanceSq(entity) > maxDistSq) {
                 continue;
             }
             if (entity instanceof EntityAutomaton ally) {
-                if (!ally.isDowned() && (ownerUuid == null || ownerUuid.equals(ally.getOwnerUuid()))) {
-                    allies.add(new double[] {ally.posX, ally.posZ});
+                if (!ally.isDowned() && bot.isAlliedWith(ally)) {
+                    allySumX += ally.posX;
+                    allySumZ += ally.posZ;
+                    allyCount++;
                 }
                 continue;
             }
             if ((entity instanceof IMob || entity == bot.getRevengeTarget())
                     && CombatTargetingService.isValidCombatCandidate(ctx, entity)) {
-                double weight = entity instanceof EntityCreeper creeper && creeper.getCreeperState() > 0 ? 3.0D : 1.0D;
-                enemies.add(new double[] {entity.posX, entity.posZ, weight});
+                boolean swelling = (entity instanceof EntityCreeper creeper && creeper.getCreeperState() > 0)
+                        || ModCompatBridge.isImminentSwellingExplosive(entity);
+                double weight = swelling ? 3.5D : 1.0D;
+                double dx = bot.posX - entity.posX;
+                double dz = bot.posZ - entity.posZ;
+                double distSq = Math.max(0.35D, dx * dx + dz * dz);
+                if (distSq <= 36.0D) {
+                    closeCount++;
+                }
+                double inv = weight / (distSq * Math.sqrt(distSq));
+                repulseX += dx * inv;
+                repulseZ += dz * inv;
+                double angle = Math.atan2(-dz, -dx);
+                int sector = MathHelper.floor(((angle + Math.PI) / (2.0D * Math.PI)) * SECTOR_COUNT) & (SECTOR_COUNT - 1);
+                occupiedMask |= (1 << sector);
+                enemyCount++;
             }
         }
 
-        return computeThreatAssessment(bot.posX, bot.posZ, enemies, allies);
+        if (enemyCount == 0) {
+            return new ThreatAssessment(0.0D, 0.0D, 0, 0, false);
+        }
+
+        if (allyCount > 0) {
+            double adx = (allySumX / allyCount) - bot.posX;
+            double adz = (allySumZ / allyCount) - bot.posZ;
+            double aDist = Math.sqrt(adx * adx + adz * adz);
+            if (aDist > 3.5D) {
+                repulseX += (adx / aDist) * 0.25D;
+                repulseZ += (adz / aDist) * 0.25D;
+            }
+        }
+
+        int occupiedCount = Integer.bitCount(occupiedMask);
+        double len = Math.sqrt(repulseX * repulseX + repulseZ * repulseZ);
+        double normX = len > 1.0E-5D ? repulseX / len : 0.0D;
+        double normZ = len > 1.0E-5D ? repulseZ / len : 0.0D;
+        boolean cornered = closeCount >= 3 || (closeCount >= 2 && occupiedCount >= 4);
+        return new ThreatAssessment(normX, normZ, enemyCount, occupiedCount, cornered);
     }
 
     public static ThreatAssessment computeThreatAssessment(
