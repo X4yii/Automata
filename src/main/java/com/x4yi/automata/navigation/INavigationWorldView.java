@@ -7,7 +7,11 @@ public interface INavigationWorldView {
 
     default boolean isPassable(int x, int y, int z) {
         byte cell = getCellType(x, y, z);
-        return cell == BlockCellType.AIR || cell == BlockCellType.WATER;
+        return cell == BlockCellType.AIR || cell == BlockCellType.WATER || cell == BlockCellType.DOOR_CLOSED;
+    }
+
+    default boolean isClosedDoor(int x, int y, int z) {
+        return getCellType(x, y, z) == BlockCellType.DOOR_CLOSED;
     }
 
     default boolean isSolidSupport(int x, int y, int z) {

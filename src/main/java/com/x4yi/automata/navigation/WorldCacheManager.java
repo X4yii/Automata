@@ -33,9 +33,12 @@ public final class WorldCacheManager {
     private static final int SECTION_VOLUME = 4096;
     private static final int SECTIONS_PER_CHUNK = 16;
     private static final int MAX_SECTIONS_PER_DIMENSION = 16384;
-    private static final int MAX_SECTIONS_CACHED_PER_CALL = 256;
-    static final long SECTION_REFRESH_INTERVAL_TICKS = 30L;
+    private static final int MAX_SECTIONS_CACHED_PER_CALL = 4;
+    private static final int MAX_SECTIONS_PER_SERVER_TICK = 6;
+    static final long SECTION_REFRESH_INTERVAL_TICKS = 600L;
     private static final byte[] EMPTY_SECTION = new byte[SECTION_VOLUME];
+    private static long lastBudgetTick = Long.MIN_VALUE;
+    private static int remainingTickSectionBudget = MAX_SECTIONS_PER_SERVER_TICK;
 
     private static final Map<Integer, DimensionSectionCache> DIMENSION_CACHES =
             new ConcurrentHashMap<>();
@@ -74,9 +77,12 @@ public final class WorldCacheManager {
         int spanX = maxCx - minCx + 1;
         int spanZ = maxCz - minCz + 1;
         if (spanX * spanZ > 121) {
-            return new SnapshotView(cache.copyRegion(start, goal, 3, worldHeight), worldHeight);
+            return new SnapshotView(cache.copyLineCorridor(start, goal, Math.min(2, Math.max(1, paddingChunks)), worldHeight), worldHeight);
         }
-        return new SnapshotView(cache.copyCorridor(minCx, maxCx, minCz, maxCz, worldHeight), worldHeight);
+        int totalSy = Math.max(SECTIONS_PER_CHUNK, (worldHeight + 15) >> 4);
+        int minSy = Math.max(0, (Math.min(start.getY(), goal.getY()) - 16) >> 4);
+        int maxSy = Math.min(totalSy - 1, (Math.max(start.getY(), goal.getY()) + 16) >> 4);
+        return cache.copyFlatCorridor(minCx, maxCx, minCz, maxCz, minSy, maxSy, worldHeight);
     }
 
     public static void ensureRegionCached(World world, BlockPos center, int chunkRadius) {
@@ -111,39 +117,59 @@ public final class WorldCacheManager {
 
         int spanX = maxCx - minCx + 1;
         int spanZ = maxCz - minCz + 1;
-        if (spanX * spanZ > 121) {
-            ensureRegionCached(world, start, 2);
-            ensureRegionCached(world, goal, 2);
+        int totalSy = Math.max(SECTIONS_PER_CHUNK, (world.getHeight() + 15) >> 4);
+        int minSy = Math.max(0, (Math.min(start.getY(), goal.getY()) - 16) >> 4);
+        int maxSy = Math.min(totalSy - 1, (Math.max(start.getY(), goal.getY()) + 16) >> 4);
+        int budget = Math.min(MAX_SECTIONS_CACHED_PER_CALL, getRemainingTickBudget(nowTick));
+        if (budget <= 0) {
             return true;
         }
-        int budget = MAX_SECTIONS_CACHED_PER_CALL;
-        refreshStartChunk(world, cache, start.getX() >> 4, start.getZ() >> 4, nowTick);
-        for (int cx = minCx; cx <= maxCx; cx++) {
-            for (int cz = minCz; cz <= maxCz; cz++) {
-                if (budget <= 0) {
-                    return false;
+        budget -= refreshStartChunk(world, cache, start.getX() >> 4, start.getZ() >> 4, minSy, maxSy, nowTick, budget);
+        if (spanX * spanZ > 121) {
+            int startCx = start.getX() >> 4;
+            int startCz = start.getZ() >> 4;
+            int goalCx = goal.getX() >> 4;
+            int goalCz = goal.getZ() >> 4;
+            int steps = Math.max(1, Math.max(Math.abs(goalCx - startCx), Math.abs(goalCz - startCz)));
+            int rad = Math.min(2, Math.max(1, paddingChunks));
+            for (int s = 0; s <= steps && budget > 0; s++) {
+                double t = (double) s / (double) steps;
+                int ccx = (int) Math.round(startCx + (goalCx - startCx) * t);
+                int ccz = (int) Math.round(startCz + (goalCz - startCz) * t);
+                for (int dx = -rad; dx <= rad && budget > 0; dx++) {
+                    for (int dz = -rad; dz <= rad && budget > 0; dz++) {
+                        budget -= cacheChunkIfLoaded(world, cache, ccx + dx, ccz + dz, minSy, maxSy, nowTick, budget);
+                    }
                 }
-                budget -= cacheChunkIfLoaded(world, cache, cx, cz, nowTick, budget);
+            }
+            return true;
+        }
+        for (int cx = minCx; cx <= maxCx && budget > 0; cx++) {
+            for (int cz = minCz; cz <= maxCz && budget > 0; cz++) {
+                budget -= cacheChunkIfLoaded(world, cache, cx, cz, minSy, maxSy, nowTick, budget);
             }
         }
         return true;
     }
 
-    private static void refreshStartChunk(
+    private static int getRemainingTickBudget(long nowTick) {
+        if (nowTick != lastBudgetTick) {
+            lastBudgetTick = nowTick;
+            remainingTickSectionBudget = MAX_SECTIONS_PER_SERVER_TICK;
+        }
+        return remainingTickSectionBudget;
+    }
+
+    private static int refreshStartChunk(
             World world,
             DimensionSectionCache cache,
             int cx,
             int cz,
-            long nowTick) {
-        if (!world.isBlockLoaded(new BlockPos((cx << 4) + 8, 64, (cz << 4) + 8))) {
-            return;
-        }
-        Chunk chunk = world.getChunk(cx, cz);
-        int sectionCount = Math.min(chunk.getBlockStorageArray().length, Math.max(SECTIONS_PER_CHUNK, (world.getHeight() + 15) >> 4));
-        for (int sy = 0; sy < sectionCount; sy++) {
-            long key = PackedPos.packSection(cx, sy, cz);
-            cache.put(key, snapshotSection(world, chunk, sy), nowTick);
-        }
+            int minSy,
+            int maxSy,
+            long nowTick,
+            int budget) {
+        return cacheChunkIfLoaded(world, cache, cx, cz, minSy, maxSy, nowTick, budget);
     }
 
     private static int cacheChunkIfLoaded(
@@ -153,20 +179,39 @@ public final class WorldCacheManager {
             int cz,
             long nowTick,
             int budget) {
+        int totalSy = Math.max(SECTIONS_PER_CHUNK, (world.getHeight() + 15) >> 4);
+        return cacheChunkIfLoaded(world, cache, cx, cz, 0, totalSy - 1, nowTick, budget);
+    }
+
+    private static int cacheChunkIfLoaded(
+            World world,
+            DimensionSectionCache cache,
+            int cx,
+            int cz,
+            int minSy,
+            int maxSy,
+            long nowTick,
+            int budget) {
         if (budget <= 0 || !world.isBlockLoaded(new BlockPos((cx << 4) + 8, 64, (cz << 4) + 8))) {
             return 0;
         }
         Chunk chunk = world.getChunk(cx, cz);
-        int sectionCount = Math.min(chunk.getBlockStorageArray().length, Math.max(SECTIONS_PER_CHUNK, (world.getHeight() + 15) >> 4));
+        int sectionLimit = Math.min(maxSy, chunk.getBlockStorageArray().length - 1);
         long refreshInterval = com.x4yi.automata.ai.BudgetedTickScheduler.scaleInterval(
                 (int) SECTION_REFRESH_INTERVAL_TICKS,
                 com.x4yi.automata.ai.BudgetedTickScheduler.getServerMspt(world.getMinecraftServer()));
         int cached = 0;
-        for (int sy = 0; sy < sectionCount && cached < budget; sy++) {
+        for (int sy = Math.max(0, minSy); sy <= sectionLimit && cached < budget; sy++) {
             long key = PackedPos.packSection(cx, sy, cz);
             if (cache.needsRefresh(key, nowTick, refreshInterval)) {
-                cache.put(key, snapshotSection(world, chunk, sy), nowTick);
-                cached++;
+                byte[] section = snapshotSection(world, chunk, sy);
+                cache.put(key, section, nowTick);
+                if (section != EMPTY_SECTION) {
+                    cached++;
+                    if (remainingTickSectionBudget > 0) {
+                        remainingTickSectionBudget--;
+                    }
+                }
             }
         }
         return cached;
@@ -371,6 +416,34 @@ public final class WorldCacheManager {
             return copy;
         }
 
+        synchronized FlatCorridorSnapshotView copyFlatCorridor(
+                int minCx,
+                int maxCx,
+                int minCz,
+                int maxCz,
+                int minSy,
+                int maxSy,
+                int worldHeight) {
+            int spanSy = Math.max(1, maxSy - minSy + 1);
+            int spanX = maxCx - minCx + 1;
+            int spanZ = maxCz - minCz + 1;
+            byte[][] flat = new byte[spanX * spanZ * spanSy][];
+            for (int cx = minCx; cx <= maxCx; cx++) {
+                int xBase = (cx - minCx) * spanZ;
+                for (int cz = minCz; cz <= maxCz; cz++) {
+                    int zBase = (xBase + (cz - minCz)) * spanSy;
+                    for (int sy = minSy; sy <= maxSy; sy++) {
+                        long key = PackedPos.packSection(cx, sy, cz);
+                        CacheEntry entry = lru.getAndMoveToFirst(key);
+                        if (entry != null) {
+                            flat[zBase + (sy - minSy)] = entry.cells;
+                        }
+                    }
+                }
+            }
+            return new FlatCorridorSnapshotView(flat, minCx, minCz, minSy, spanX, spanZ, spanSy, worldHeight);
+        }
+
         synchronized Long2ObjectOpenHashMap<byte[]> copyCorridor(
                 int minCx,
                 int maxCx,
@@ -390,6 +463,27 @@ public final class WorldCacheManager {
                         }
                     }
                 }
+            }
+            return copy;
+        }
+
+        synchronized Long2ObjectOpenHashMap<byte[]> copyLineCorridor(
+                BlockPos start,
+                BlockPos goal,
+                int radiusChunks,
+                int worldHeight) {
+            int maxSy = Math.max(SECTIONS_PER_CHUNK, (worldHeight + 15) >> 4);
+            Long2ObjectOpenHashMap<byte[]> copy = new Long2ObjectOpenHashMap<>(512);
+            int startCx = start.getX() >> 4;
+            int startCz = start.getZ() >> 4;
+            int goalCx = goal.getX() >> 4;
+            int goalCz = goal.getZ() >> 4;
+            int steps = Math.max(1, Math.max(Math.abs(goalCx - startCx), Math.abs(goalCz - startCz)));
+            for (int s = 0; s <= steps; s++) {
+                double t = (double) s / (double) steps;
+                int ccx = (int) Math.round(startCx + (goalCx - startCx) * t);
+                int ccz = (int) Math.round(startCz + (goalCz - startCz) * t);
+                copyAround(copy, ccx, ccz, radiusChunks, maxSy);
             }
             return copy;
         }
@@ -436,9 +530,72 @@ public final class WorldCacheManager {
         }
     }
 
+    private static final class FlatCorridorSnapshotView implements INavigationWorldView {
+        private final byte[][] sections;
+        private final int minCx;
+        private final int minCz;
+        private final int minSy;
+        private final int spanX;
+        private final int spanZ;
+        private final int spanSy;
+        private final int worldHeight;
+        private long lastSectionKey = Long.MIN_VALUE;
+        private byte[] lastSectionCells;
+
+        FlatCorridorSnapshotView(
+                byte[][] sections,
+                int minCx,
+                int minCz,
+                int minSy,
+                int spanX,
+                int spanZ,
+                int spanSy,
+                int worldHeight) {
+            this.sections = sections;
+            this.minCx = minCx;
+            this.minCz = minCz;
+            this.minSy = minSy;
+            this.spanX = spanX;
+            this.spanZ = spanZ;
+            this.spanSy = spanSy;
+            this.worldHeight = worldHeight;
+        }
+
+        @Override
+        public byte getCellType(int x, int y, int z) {
+            if (y < 0 || y >= worldHeight) {
+                return BlockCellType.UNLOADED;
+            }
+            int cx = x >> 4;
+            int sy = y >> 4;
+            int cz = z >> 4;
+            long key = PackedPos.packSection(cx, sy, cz);
+            byte[] cells;
+            if (key == lastSectionKey) {
+                cells = lastSectionCells;
+            } else {
+                int rx = cx - minCx;
+                int rz = cz - minCz;
+                int rsy = sy - minSy;
+                if (rx < 0 || rx >= spanX || rz < 0 || rz >= spanZ || rsy < 0 || rsy >= spanSy) {
+                    return BlockCellType.UNLOADED;
+                }
+                cells = sections[((rx * spanZ) + rz) * spanSy + rsy];
+                lastSectionKey = key;
+                lastSectionCells = cells;
+            }
+            if (cells == null) {
+                return BlockCellType.UNLOADED;
+            }
+            return cells[index(x & 15, y & 15, z & 15)];
+        }
+    }
+
     private static final class SnapshotView implements INavigationWorldView {
         private final Long2ObjectOpenHashMap<byte[]> sections;
         private final int worldHeight;
+        private long lastSectionKey = Long.MIN_VALUE;
+        private byte[] lastSectionCells;
 
         SnapshotView(@Nullable Long2ObjectOpenHashMap<byte[]> sections, int worldHeight) {
             this.sections = sections;
@@ -451,7 +608,14 @@ public final class WorldCacheManager {
                 return BlockCellType.UNLOADED;
             }
             long key = PackedPos.packSection(x >> 4, y >> 4, z >> 4);
-            byte[] cells = sections.get(key);
+            byte[] cells;
+            if (key == lastSectionKey) {
+                cells = lastSectionCells;
+            } else {
+                cells = sections.get(key);
+                lastSectionKey = key;
+                lastSectionCells = cells;
+            }
             if (cells == null) {
                 return BlockCellType.UNLOADED;
             }

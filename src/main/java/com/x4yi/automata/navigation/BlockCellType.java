@@ -10,6 +10,7 @@ public final class BlockCellType {
     public static final byte UNLOADED = 4;
     public static final byte TALL_OBSTACLE = 5;
     public static final byte UNBREAKABLE = 6;
+    public static final byte DOOR_CLOSED = 7;
 
     private BlockCellType() {}
 }

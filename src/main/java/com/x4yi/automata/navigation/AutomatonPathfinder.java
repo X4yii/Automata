@@ -24,11 +24,17 @@ public final class AutomatonPathfinder {
     private static final float COST_TURN_PENALTY = 0.15F;
     private static final float COST_EDGE_HAZARD_PENALTY = 0.4F;
     private static final float COST_WATER_PENALTY = 5.5F;
+    private static final float COST_OPEN_DOOR = 1.5F;
     private static final float HEURISTIC_WEIGHT = 1.05F;
+    private static final float[] BARITONE_COEFFICIENTS = {1.5F, 2.0F, 2.5F, 3.0F, 4.0F, 5.0F, 10.0F};
     private static final int[][] DIAG_PARKOUR_OFFSETS = {
             {2, 1}, {2, -1}, {-2, 1}, {-2, -1},
             {1, 2}, {1, -2}, {-1, 2}, {-1, -2},
-            {2, 2}, {2, -2}, {-2, 2}, {-2, -2}
+            {2, 2}, {2, -2}, {-2, 2}, {-2, -2},
+            {3, 1}, {3, -1}, {-3, 1}, {-3, -1},
+            {1, 3}, {1, -3}, {-1, 3}, {-1, -3},
+            {3, 2}, {3, -2}, {-3, 2}, {-3, -2},
+            {2, 3}, {2, -3}, {-2, 3}, {-2, -3}
     };
 
     private static final ThreadLocal<ScratchBuffers> SCRATCH =
@@ -46,7 +52,21 @@ public final class AutomatonPathfinder {
             int goalZ,
             PathfindingSettings settings,
             @Nullable AtomicBoolean cancelled) {
-        return runSinglePass(world, startX, startY, startZ, goalX, goalY, goalZ, settings, cancelled);
+        return findPath(world, startX, startY, startZ, goalX, goalY, goalZ, settings, cancelled, null);
+    }
+
+    public static PathResult findPath(
+            INavigationWorldView world,
+            int startX,
+            int startY,
+            int startZ,
+            int goalX,
+            int goalY,
+            int goalZ,
+            PathfindingSettings settings,
+            @Nullable AtomicBoolean cancelled,
+            @Nullable it.unimi.dsi.fastutil.longs.Long2FloatMap nodePenalties) {
+        return runSinglePass(world, startX, startY, startZ, goalX, goalY, goalZ, settings, cancelled, nodePenalties);
     }
 
     private static PathResult runSinglePass(
@@ -58,7 +78,8 @@ public final class AutomatonPathfinder {
             int goalY,
             int goalZ,
             PathfindingSettings settings,
-            @Nullable AtomicBoolean cancelled) {
+            @Nullable AtomicBoolean cancelled,
+            @Nullable it.unimi.dsi.fastutil.longs.Long2FloatMap nodePenalties) {
         long startNanos = System.nanoTime();
         long startKey = PackedPos.pack(startX, startY, startZ);
         long goalKey = PackedPos.pack(goalX, goalY, goalZ);
@@ -69,54 +90,125 @@ public final class AutomatonPathfinder {
 
         ScratchBuffers buf = SCRATCH.get();
         buf.reset();
+        buf.activePenalties = nodePenalties;
+        try {
+            buf.table.putOrUpdate(startKey, startKey, 0.0F, PathNodeAction.WALK, PrimitiveNodeTable.STATE_OPEN);
+            float startH = heuristic(startX, startY, startZ, goalX, goalY, goalZ);
+            buf.heap.push(startKey, startH);
 
-        buf.table.putOrUpdate(startKey, startKey, 0.0F, PathNodeAction.WALK, PrimitiveNodeTable.STATE_OPEN);
-        buf.heap.push(startKey, heuristic(startX, startY, startZ, goalX, goalY, goalZ));
+            long bestKey = startKey;
+            float bestH = startH;
+            long[] coeffBestKeys = new long[BARITONE_COEFFICIENTS.length];
+            float[] coeffBestScores = new float[BARITONE_COEFFICIENTS.length];
+            for (int i = 0; i < BARITONE_COEFFICIENTS.length; i++) {
+                coeffBestKeys[i] = startKey;
+                coeffBestScores[i] = BARITONE_COEFFICIENTS[i] * startH;
+            }
+            int expanded = 0;
+            int maxNodes = Math.max(64, settings.maxExpandedNodes());
+            long maxDurationNanos = settings.maxDurationNanos();
 
-        long bestKey = startKey;
-        float startH = heuristic(startX, startY, startZ, goalX, goalY, goalZ);
-        float bestH = startH;
-        int expanded = 0;
-        int maxNodes = Math.max(64, settings.maxExpandedNodes());
+            while (!buf.heap.isEmpty() && expanded < maxNodes) {
+                if ((expanded & 63) == 0) {
+                    if (cancelled != null && cancelled.get()) {
+                        return PathResult.EMPTY;
+                    }
+                    if (expanded > 0 && maxDurationNanos > 0L && (System.nanoTime() - startNanos) >= maxDurationNanos) {
+                        break;
+                    }
+                }
 
-        while (!buf.heap.isEmpty() && expanded < maxNodes) {
-            if (cancelled != null && cancelled.get()) {
+                long currentKey = buf.heap.popKey();
+                int currentSlot = buf.table.findSlot(currentKey);
+                if (currentSlot < 0 || buf.table.getState(currentSlot) == PrimitiveNodeTable.STATE_CLOSED) {
+                    continue;
+                }
+
+                buf.table.setClosed(currentSlot);
+                float currentG = buf.table.getGScore(currentSlot);
+                buf.currentScaffolds = buf.table.getScaffoldsUsed(currentSlot);
+                long grandParent = buf.table.getParent(currentSlot);
+                if (grandParent == currentKey) {
+                    buf.currentPrevDx = 0;
+                    buf.currentPrevDz = 0;
+                } else {
+                    buf.currentPrevDx = Integer.compare(PackedPos.unpackX(currentKey), PackedPos.unpackX(grandParent));
+                    buf.currentPrevDz = Integer.compare(PackedPos.unpackZ(currentKey), PackedPos.unpackZ(grandParent));
+                }
+                expanded++;
+
+                int cx = PackedPos.unpackX(currentKey);
+                int cy = PackedPos.unpackY(currentKey);
+                int cz = PackedPos.unpackZ(currentKey);
+
+                if (currentKey == goalKey) {
+                    return reconstructPath(world, buf.table, currentKey, startKey, true, expanded, System.nanoTime() - startNanos, buf);
+                }
+
+                float currentH = heuristic(cx, cy, cz, goalX, goalY, goalZ);
+                if (currentH < bestH) {
+                    bestH = currentH;
+                    bestKey = currentKey;
+                }
+                for (int i = 0; i < BARITONE_COEFFICIENTS.length; i++) {
+                    float fCoeff = currentG + BARITONE_COEFFICIENTS[i] * currentH;
+                    if (fCoeff < coeffBestScores[i]) {
+                        coeffBestScores[i] = fCoeff;
+                        coeffBestKeys[i] = currentKey;
+                    }
+                }
+
+                expandCardinalAndVertical(world, buf, settings, currentKey, cx, cy, cz, currentG, goalX, goalY, goalZ);
+                expandDiagonals(world, buf, settings, currentKey, cx, cy, cz, currentG, goalX, goalY, goalZ);
+            }
+
+            long partialKey = selectBestPartialKey(startX, startY, startZ, goalY, startKey, startH, bestKey, bestH, coeffBestKeys);
+            boolean reached = partialKey == goalKey;
+            if (!reached && partialKey == startKey) {
                 return PathResult.EMPTY;
             }
+            return reconstructPath(world, buf.table, partialKey, startKey, reached, expanded, System.nanoTime() - startNanos, buf);
+        } finally {
+            buf.activePenalties = null;
+        }
+    }
 
-            long currentKey = buf.heap.popKey();
-            int currentSlot = buf.table.findSlot(currentKey);
-            if (currentSlot < 0 || buf.table.getState(currentSlot) == PrimitiveNodeTable.STATE_CLOSED) {
+    private static long selectBestPartialKey(
+            int startX,
+            int startY,
+            int startZ,
+            int goalY,
+            long startKey,
+            float startH,
+            long bestKey,
+            float bestH,
+            long[] coeffBestKeys) {
+        if (goalY >= startY && bestKey != startKey && bestH < startH - 1.5F) {
+            int bdx = PackedPos.unpackX(bestKey) - startX;
+            int bdy = PackedPos.unpackY(bestKey) - startY;
+            int bdz = PackedPos.unpackZ(bestKey) - startZ;
+            if ((bdx * bdx + bdy * bdy + bdz * bdz) >= 4) {
+                return bestKey;
+            }
+        }
+        int startIdx = goalY >= startY ? coeffBestKeys.length - 1 : 0;
+        int step = goalY >= startY ? -1 : 1;
+        for (int i = startIdx; i >= 0 && i < coeffBestKeys.length; i += step) {
+            long candidate = coeffBestKeys[i];
+            if (candidate == startKey) {
                 continue;
             }
-
-            buf.table.setClosed(currentSlot);
-            float currentG = buf.table.getGScore(currentSlot);
-            expanded++;
-
-            int cx = PackedPos.unpackX(currentKey);
-            int cy = PackedPos.unpackY(currentKey);
-            int cz = PackedPos.unpackZ(currentKey);
-
-            if (currentKey == goalKey) {
-                return reconstructPath(world, buf.table, currentKey, startKey, true, expanded, System.nanoTime() - startNanos, buf);
+            int dx = PackedPos.unpackX(candidate) - startX;
+            int dy = PackedPos.unpackY(candidate) - startY;
+            int dz = PackedPos.unpackZ(candidate) - startZ;
+            if ((dx * dx + dy * dy + dz * dz) >= 16) {
+                return candidate;
             }
-
-            float currentH = heuristic(cx, cy, cz, goalX, goalY, goalZ);
-            if (currentH < bestH) {
-                bestH = currentH;
-                bestKey = currentKey;
-            }
-
-            expandCardinalAndVertical(world, buf, settings, currentKey, cx, cy, cz, currentG, goalX, goalY, goalZ);
-            expandDiagonals(world, buf, settings, currentKey, cx, cy, cz, currentG, goalX, goalY, goalZ);
         }
-
-        boolean reached = bestKey == goalKey;
-        if (!reached && (bestKey == startKey || bestH >= startH - 1.5F)) {
-            return PathResult.EMPTY;
+        if (bestKey != startKey && bestH < startH - 1.5F) {
+            return bestKey;
         }
-        return reconstructPath(world, buf.table, bestKey, startKey, reached, expanded, System.nanoTime() - startNanos, buf);
+        return startKey;
     }
 
     private static void expandCardinalAndVertical(
@@ -131,9 +223,11 @@ public final class AutomatonPathfinder {
             int goalX,
             int goalY,
             int goalZ) {
+        int parentSlot = buf.table.findSlot(parentKey);
+        int parentScaffolds = parentSlot >= 0 ? buf.table.getScaffoldsUsed(parentSlot) : 0;
         boolean canScaffoldMore = settings.allowScaffolding()
                 && (settings.availableScaffoldBlocks() == Integer.MAX_VALUE
-                        || countScaffoldUsed(buf.table, parentKey) < settings.availableScaffoldBlocks());
+                        || parentScaffolds < settings.availableScaffoldBlocks());
 
         for (int dir = 0; dir < 4; dir++) {
             int dx = CARDINAL_DX[dir];
@@ -269,7 +363,9 @@ public final class AutomatonPathfinder {
             int checkZ = cz + dz * gap;
             if (!world.isPassable(checkX, cy, checkZ)
                     || !world.isPassable(checkX, cy + 1, checkZ)
-                    || !world.isPassable(checkX, cy + 2, checkZ)) {
+                    || !world.isPassable(checkX, cy + 2, checkZ)
+                    || world.isClosedDoor(checkX, cy, checkZ)
+                    || world.isClosedDoor(checkX, cy + 1, checkZ)) {
                 return;
             }
             if (world.isHazard(checkX, cy - 1, checkZ)) {
@@ -316,16 +412,7 @@ public final class AutomatonPathfinder {
         for (int[] off : DIAG_PARKOUR_OFFSETS) {
             int ox = off[0];
             int oz = off[1];
-            int midX = cx + Integer.signum(ox);
-            int midZ = cz + Integer.signum(oz);
-            if (!hasBodyClearance(world, midX, cy, cz)
-                    || !world.isPassable(midX, cy + 2, cz)
-                    || !hasBodyClearance(world, cx, cy, midZ)
-                    || !world.isPassable(cx, cy + 2, midZ)
-                    || !world.isPassable(midX, cy, midZ)
-                    || !world.isPassable(midX, cy + 1, midZ)
-                    || !world.isPassable(midX, cy + 2, midZ)
-                    || world.isHazard(midX, cy - 1, midZ)) {
+            if (!isDiagonalParkourCorridorClear(world, cx, cy, cz, ox, oz)) {
                 continue;
             }
             int landX = cx + ox;
@@ -335,8 +422,8 @@ public final class AutomatonPathfinder {
                 float cost = COST_SPRINT_JUMP_BASE + dist * 0.85F;
                 offerNode(world, buf, parentKey, landX, cy, landZ, currentG + cost, PathNodeAction.SPRINT_JUMP, goalX, goalY, goalZ);
             }
-            if (Math.abs(ox) + Math.abs(oz) <= 2
-                    && world.isPassable(midX, cy + 3, midZ)
+            if (dist <= 3.25F
+                    && world.isPassable(cx, cy + 3, cz)
                     && canStandAt(world, landX, cy + 1, landZ)
                     && world.isPassable(landX, cy + 3, landZ)) {
                 float cost = COST_SPRINT_JUMP_BASE + dist * 1.05F + 0.5F;
@@ -346,7 +433,41 @@ public final class AutomatonPathfinder {
                 float cost = COST_SPRINT_JUMP_BASE + dist * 0.9F + 0.3F;
                 offerNode(world, buf, parentKey, landX, cy - 1, landZ, currentG + cost, PathNodeAction.SPRINT_JUMP, goalX, goalY, goalZ);
             }
+            if (canStandAt(world, landX, cy - 2, landZ) && world.isPassable(landX, cy + 1, landZ)) {
+                float cost = COST_SPRINT_JUMP_BASE + dist * 0.95F + 0.55F;
+                offerNode(world, buf, parentKey, landX, cy - 2, landZ, currentG + cost, PathNodeAction.SPRINT_JUMP, goalX, goalY, goalZ);
+            }
         }
+    }
+
+    private static boolean isDiagonalParkourCorridorClear(
+            INavigationWorldView world,
+            int cx,
+            int cy,
+            int cz,
+            int ox,
+            int oz) {
+        int signX = Integer.signum(ox);
+        int signZ = Integer.signum(oz);
+        boolean xCornerFree = hasBodyClearance(world, cx + signX, cy, cz) && world.isPassable(cx + signX, cy + 2, cz);
+        boolean zCornerFree = hasBodyClearance(world, cx, cy, cz + signZ) && world.isPassable(cx, cy + 2, cz + signZ);
+        if (!xCornerFree && !zCornerFree) {
+            return false;
+        }
+        int steps = Math.max(Math.abs(ox), Math.abs(oz));
+        for (int s = 1; s < steps; s++) {
+            float t = (float) s / (float) steps;
+            int sx = cx + Math.round(ox * t);
+            int sz = cz + Math.round(oz * t);
+            if (!world.isPassable(sx, cy + 1, sz)
+                    || !world.isPassable(sx, cy + 2, sz)
+                    || world.isClosedDoor(sx, cy, sz)
+                    || world.isClosedDoor(sx, cy + 1, sz)
+                    || world.isHazard(sx, cy - 1, sz)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void expandDiagonals(
@@ -435,65 +556,41 @@ public final class AutomatonPathfinder {
         if (action == PathNodeAction.BREAK_THROUGH && dirPenalty > 0.0F) {
             dirPenalty += 2.0F;
         }
+        long key = PackedPos.pack(nx, ny, nz);
+        float failurePenalty = buf.activePenalties != null ? buf.activePenalties.get(key) : 0.0F;
+        float doorPenalty = (world.isClosedDoor(nx, ny, nz) || world.isClosedDoor(nx, ny + 1, nz)) ? COST_OPEN_DOOR : 0.0F;
         float adjustedG = tentativeG
                 + dirPenalty
+                + failurePenalty
+                + doorPenalty
                 + edgeHazardPenalty(world, nx, ny, nz)
                 + enclosedPenalty(world, nx, ny, nz)
                 + waterPenalty(world, parentKey, nx, ny, nz, goalX, goalY, goalZ);
-        long key = PackedPos.pack(nx, ny, nz);
-        int slot = buf.table.findSlot(key);
-        if (slot >= 0) {
-            if (buf.table.getState(slot) == PrimitiveNodeTable.STATE_CLOSED) {
-                return;
-            }
-            if (adjustedG >= buf.table.getGScore(slot)) {
-                return;
-            }
+        int slot = buf.table.findOrInsertSlot(key);
+        byte existingState = buf.table.getState(slot);
+        if (existingState == PrimitiveNodeTable.STATE_CLOSED) {
+            return;
         }
-        buf.table.putOrUpdate(key, parentKey, adjustedG, action, PrimitiveNodeTable.STATE_OPEN);
+        if (existingState == PrimitiveNodeTable.STATE_OPEN && adjustedG >= buf.table.getGScore(slot)) {
+            return;
+        }
+        int nextScaffolds = (action == PathNodeAction.BRIDGE || action == PathNodeAction.PILLAR_UP)
+                ? Math.min(65535, buf.currentScaffolds + 1)
+                : buf.currentScaffolds;
+        buf.table.updateSlot(slot, parentKey, adjustedG, action, PrimitiveNodeTable.STATE_OPEN, (short) nextScaffolds);
         float fScore = adjustedG + heuristic(nx, ny, nz, goalX, goalY, goalZ) * HEURISTIC_WEIGHT;
         buf.heap.push(key, fScore);
     }
 
-    private static int countScaffoldUsed(PrimitiveNodeTable table, long nodeKey) {
-        int used = 0;
-        long cur = nodeKey;
-        for (int guard = 0; guard < 256; guard++) {
-            int slot = table.findSlot(cur);
-            if (slot < 0) {
-                break;
-            }
-            byte act = table.getAction(slot);
-            if (act == PathNodeAction.BRIDGE || act == PathNodeAction.PILLAR_UP) {
-                used++;
-            }
-            long parent = table.getParent(slot);
-            if (parent == cur) {
-                break;
-            }
-            cur = parent;
-        }
-        return used;
-    }
-
     private static float directionPenalty(ScratchBuffers buf, long parentKey, int nx, int nz) {
-        int parentSlot = buf.table.findSlot(parentKey);
-        if (parentSlot < 0) {
-            return 0.0F;
-        }
-        long grandParent = buf.table.getParent(parentSlot);
-        if (grandParent == parentKey) {
+        if (buf.currentPrevDx == 0 && buf.currentPrevDz == 0) {
             return 0.0F;
         }
         int px = PackedPos.unpackX(parentKey);
         int pz = PackedPos.unpackZ(parentKey);
-        int gx = PackedPos.unpackX(grandParent);
-        int gz = PackedPos.unpackZ(grandParent);
-        int prevDx = Integer.compare(px, gx);
-        int prevDz = Integer.compare(pz, gz);
         int curDx = Integer.compare(nx, px);
         int curDz = Integer.compare(nz, pz);
-        if ((prevDx != 0 || prevDz != 0) && (prevDx != curDx || prevDz != curDz)) {
+        if (buf.currentPrevDx != curDx || buf.currentPrevDz != curDz) {
             return COST_TURN_PENALTY;
         }
         return 0.0F;
@@ -582,7 +679,7 @@ public final class AutomatonPathfinder {
             steps[i] = buf.reverseKeys[rev];
             actions[i] = buf.reverseActions[rev];
         }
-        return smoothWalkSegments(world, steps, actions, count, complete, expanded, elapsedNanos);
+        return smoothWalkSegments(world, steps, actions, count, complete, expanded, elapsedNanos, buf);
     }
 
     private static PathResult smoothWalkSegments(
@@ -592,7 +689,8 @@ public final class AutomatonPathfinder {
             int count,
             boolean complete,
             int expanded,
-            long elapsedNanos) {
+            long elapsedNanos,
+            ScratchBuffers buf) {
         if (count <= 2) {
             return new PathResult(steps, actions, complete, expanded, elapsedNanos);
         }
@@ -614,11 +712,12 @@ public final class AutomatonPathfinder {
             }
             int anchorY = PackedPos.unpackY(steps[anchor]);
             int farthest = anchor + 1;
-            for (int probe = anchor + 2; probe < count; probe++) {
+            int maxProbe = Math.min(count, anchor + 25);
+            for (int probe = anchor + 2; probe < maxProbe; probe++) {
                 if (actions[probe] != PathNodeAction.WALK || PackedPos.unpackY(steps[probe]) != anchorY) {
                     break;
                 }
-                if (hasWalkLineOfSight(world, steps[anchor], steps[probe])) {
+                if (hasWalkLineOfSight(world, steps[anchor], steps[probe], buf)) {
                     farthest = probe;
                 }
             }
@@ -635,12 +734,17 @@ public final class AutomatonPathfinder {
                 elapsedNanos);
     }
 
-    private static boolean hasWalkLineOfSight(INavigationWorldView world, long fromKey, long toKey) {
+    private static boolean hasWalkLineOfSight(INavigationWorldView world, long fromKey, long toKey, ScratchBuffers buf) {
         int y = PackedPos.unpackY(fromKey);
-        double x0 = PackedPos.unpackX(fromKey) + 0.5D;
-        double z0 = PackedPos.unpackZ(fromKey) + 0.5D;
-        double x1 = PackedPos.unpackX(toKey) + 0.5D;
-        double z1 = PackedPos.unpackZ(toKey) + 0.5D;
+        int x0i = PackedPos.unpackX(fromKey);
+        int z0i = PackedPos.unpackZ(fromKey);
+        int x1i = PackedPos.unpackX(toKey);
+        int z1i = PackedPos.unpackZ(toKey);
+        boolean allowWater = world.isWater(x0i, y, z0i) || world.isWater(x1i, y, z1i);
+        double x0 = x0i + 0.5D;
+        double z0 = z0i + 0.5D;
+        double x1 = x1i + 0.5D;
+        double z1 = z1i + 0.5D;
         double dx = x1 - x0;
         double dz = z1 - z0;
         double dist = Math.sqrt(dx * dx + dz * dz);
@@ -654,11 +758,39 @@ public final class AutomatonPathfinder {
             double t = (double) i / samples;
             double px = x0 + dx * t;
             double pz = z0 + dz * t;
-            if (!canStandAt(world, (int) Math.floor(px), y, (int) Math.floor(pz))
-                    || !canStandAt(world, (int) Math.floor(px + perpX), y, (int) Math.floor(pz + perpZ))
-                    || !canStandAt(world, (int) Math.floor(px - perpX), y, (int) Math.floor(pz - perpZ))) {
+            int sx = (int) Math.floor(px);
+            int sz = (int) Math.floor(pz);
+            int sxPlus = (int) Math.floor(px + perpX);
+            int szPlus = (int) Math.floor(pz + perpZ);
+            int sxMinus = (int) Math.floor(px - perpX);
+            int szMinus = (int) Math.floor(pz - perpZ);
+            if (!isWalkSampleClear(world, sx, y, sz, allowWater, buf)
+                    || !isWalkSampleClear(world, sxPlus, y, szPlus, allowWater, buf)
+                    || !isWalkSampleClear(world, sxMinus, y, szMinus, allowWater, buf)) {
                 return false;
             }
+        }
+        return true;
+    }
+
+    private static boolean isWalkSampleClear(
+            INavigationWorldView world,
+            int x,
+            int y,
+            int z,
+            boolean allowWater,
+            ScratchBuffers buf) {
+        if (!canStandAt(world, x, y, z)) {
+            return false;
+        }
+        if (world.isClosedDoor(x, y, z) || world.isClosedDoor(x, y + 1, z)) {
+            return false;
+        }
+        if (!allowWater && (world.isWater(x, y, z) || world.isWater(x, y - 1, z))) {
+            return false;
+        }
+        if (buf.activePenalties != null && buf.activePenalties.get(PackedPos.pack(x, y, z)) > 0.0F) {
+            return false;
         }
         return true;
     }
@@ -668,6 +800,11 @@ public final class AutomatonPathfinder {
         final PrimitiveNodeTable table;
         long[] reverseKeys;
         byte[] reverseActions;
+        int currentScaffolds;
+        int currentPrevDx;
+        int currentPrevDz;
+        @Nullable
+        it.unimi.dsi.fastutil.longs.Long2FloatMap activePenalties;
 
         ScratchBuffers(int expectedNodes) {
             this.heap = new PrimitiveMinHeap(expectedNodes);
