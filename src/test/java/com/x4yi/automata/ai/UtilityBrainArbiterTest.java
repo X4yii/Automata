@@ -36,5 +36,16 @@ class UtilityBrainArbiterTest {
         assertEquals(BrainBehavior.LOGISTICS,
                 UtilityBrainArbiter.selectBestBehavior(borderlineLogistics, BrainBehavior.LOGISTICS));
     }
+
+    @Test
+    void activeRangedCombatStaysOnActiveJobWhenDownedAllyIsSuppressed() {
+        UtilityState rangedCombat = UtilityState.builder()
+                .allyNeedsRevive(false)
+                .safeLootAvailable(false)
+                .hasActiveCommittedJob(true)
+                .build();
+        assertEquals(BrainBehavior.ACTIVE_JOB,
+                UtilityBrainArbiter.selectBestBehavior(rangedCombat, BrainBehavior.SURVIVAL));
+    }
 }
 

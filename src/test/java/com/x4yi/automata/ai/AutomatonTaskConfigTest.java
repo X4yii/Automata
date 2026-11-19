@@ -57,5 +57,28 @@ class AutomatonTaskConfigTest {
         assertFalse(restored.getEntityFilterIds().contains("minecraft:villager"));
         assertTrue(restored.getEntityFilterIds().contains("minecraft:creeper"));
     }
+
+    @Test
+    void sourceAndSavingChestsRoundTripAndReadLegacyDepositChest() {
+        AutomatonTaskConfig cfg = new AutomatonTaskConfig();
+        net.minecraft.util.math.BlockPos source = new net.minecraft.util.math.BlockPos(10, 64, -20);
+        net.minecraft.util.math.BlockPos saving = new net.minecraft.util.math.BlockPos(14, 65, -18);
+        cfg.setSourceChest(source);
+        cfg.setSavingChest(saving);
+
+        NBTTagCompound nbt = cfg.serializeNBT();
+        AutomatonTaskConfig restored = new AutomatonTaskConfig();
+        restored.deserializeNBT(nbt);
+
+        assertEquals(source, restored.getSourceChest());
+        assertEquals(saving, restored.getSavingChest());
+        assertEquals(saving, restored.getDepositChest());
+
+        NBTTagCompound legacyNbt = new NBTTagCompound();
+        legacyNbt.setLong("DepositChest", saving.toLong());
+        AutomatonTaskConfig legacyRestored = new AutomatonTaskConfig();
+        legacyRestored.deserializeNBT(legacyNbt);
+        assertEquals(saving, legacyRestored.getSavingChest());
+    }
 }
 

@@ -26,7 +26,7 @@ class SpartanWeaponryCompatTest {
 
         NBTTagCompound nbt = new NBTTagCompound();
         nbt.setInteger("Ammo", 0);
-        nbt.setBoolean("Loaded", true);
+        nbt.setBoolean("isLoaded", true);
         stack.setTagCompound(nbt);
 
         assertEquals(0, SpartanWeaponryCompat.getRemainingThrowingAmmo(stack));
@@ -44,7 +44,6 @@ class SpartanWeaponryCompatTest {
         ammoStackCrossbow.setTagCompound(cbNbt);
         assertTrue(SpartanWeaponryCompat.isCrossbowLoaded(ammoStackCrossbow));
 
-        // Adversarial bounds: extreme AmmoUsed > maxAmmo must clamp to 0, empty ammoStack must be unloaded.
         ItemStack overUsed = new ItemStack(Items.STICK);
         NBTTagCompound overNbt = new NBTTagCompound();
         overNbt.setInteger("AmmoUsed", 999);

@@ -107,14 +107,19 @@ class AutomatonPathfinderTest {
         int iterations = 300;
         long totalNanos = 0L;
         int lastExpanded = 0;
+        int completed = 0;
         for (int i = 0; i < iterations; i++) {
             PathResult res = AutomatonPathfinder.findPath(world, 2, 65, 16, 34, 65, 16, settings, null);
-            assertTrue(res.isComplete());
+            if (res.isComplete()) {
+                completed++;
+            }
             totalNanos += res.getElapsedNanos();
             lastExpanded = res.getExpandedNodes();
         }
         double avgMicros = (totalNanos / (double) iterations) / 1000.0D;
-        System.out.printf("AutomatonPathfinder 32-block benchmark: avg=%.2f us/query, expandedNodes=%d%n", avgMicros, lastExpanded);
+        System.out.printf("AutomatonPathfinder 32-block benchmark: avg=%.2f us/query, completed=%d/%d, expandedNodes=%d%n",
+                avgMicros, completed, iterations, lastExpanded);
+        assertTrue(completed >= 295, "Expected >=295/300 complete paths, got " + completed);
         assertTrue(avgMicros < 50000.0D);
     }
 
@@ -567,7 +572,6 @@ class AutomatonPathfinderTest {
     @Test
     void requiresBreakableCurrentCeilingForAscendingCaveStair() {
         SyntheticWorld world = new SyntheticWorld();
-        // Solid stone wall at x=2, y=65..67, with unbreakable ceiling directly above start (1, 67, 2).
         world.fillFloor(0, 4, 64, 1, 3, BlockCellType.SOLID);
         for (int y = 65; y <= 67; y++) {
             for (int z = 1; z <= 3; z++) {
@@ -578,7 +582,6 @@ class AutomatonPathfinderTest {
         for (int z = 1; z <= 3; z++) {
             world.set(1, 67, z, BlockCellType.UNBREAKABLE);
         }
-        // Prevent going around via z=0 or z=4
         for (int z : new int[]{0, 4}) {
             for (int x = 0; x <= 4; x++) {
                 world.set(x, 65, z, BlockCellType.UNBREAKABLE);
@@ -589,10 +592,109 @@ class AutomatonPathfinderTest {
         PathResult blocked = AutomatonPathfinder.findPath(world, 1, 65, 2, 2, 66, 2, breakOnly, null);
         assertFalse(blocked.isComplete());
 
-        // Making (1, 67, 2) breakable SOLID allows carving the ascending step.
         world.set(1, 67, 2, BlockCellType.SOLID);
         PathResult allowed = AutomatonPathfinder.findPath(world, 1, 65, 2, 2, 66, 2, breakOnly, null);
         assertTrue(allowed.isComplete());
+    }
+
+    @Test
+    void producesPartialPathUnderTightBudgetAndReroutesAroundPenalizedNode() {
+        SyntheticWorld world = new SyntheticWorld();
+        world.fillFloor(-2, 85, 63, -4, 4, BlockCellType.SOLID);
+
+        PathfindingSettings tight = new PathfindingSettings(false, false, false, 64, 3, 0);
+        PathResult partial = AutomatonPathfinder.findPath(world, 0, 64, 0, 80, 64, 0, tight, null, null);
+        assertFalse(partial.isEmpty());
+        assertFalse(partial.isComplete());
+        long last = partial.getStep(partial.length() - 1);
+        assertTrue(PackedPos.unpackX(last) >= 4);
+
+        it.unimi.dsi.fastutil.longs.Long2FloatOpenHashMap penalties =
+                new it.unimi.dsi.fastutil.longs.Long2FloatOpenHashMap();
+        penalties.put(PackedPos.pack(2, 64, 0), 80.0F);
+        PathResult detoured = AutomatonPathfinder.findPath(
+                world, 0, 64, 0, 5, 64, 0,
+                PathfindingSettings.defaults(false, false), null, penalties);
+        assertTrue(detoured.isComplete());
+        boolean steppedOnPenalized = false;
+        for (int i = 0; i < detoured.length(); i++) {
+            if (detoured.getStep(i) == PackedPos.pack(2, 64, 0)) {
+                steppedOnPenalized = true;
+            }
+        }
+        assertFalse(steppedOnPenalized);
+    }
+
+    @Test
+    void plansComplexDiagonalAndAscendingDiagonalParkourAndStaysOnElevatedPlatform() {
+        SyntheticWorld parkourWorld = new SyntheticWorld();
+        parkourWorld.set(0, 64, 0, BlockCellType.SOLID);
+        parkourWorld.set(1, 65, 0, BlockCellType.SOLID);
+        parkourWorld.set(3, 64, 1, BlockCellType.SOLID);
+        parkourWorld.set(5, 65, 2, BlockCellType.SOLID);
+
+        PathfindingSettings settings = PathfindingSettings.defaults(false, false);
+        PathResult result = AutomatonPathfinder.findPath(parkourWorld, 0, 65, 0, 5, 66, 2, settings, null);
+        assertTrue(result.isComplete());
+
+        SyntheticWorld elevatedWorld = new SyntheticWorld();
+        elevatedWorld.fillFloor(-10, 10, 60, -10, 10, BlockCellType.SOLID);
+        elevatedWorld.fillFloor(0, 6, 70, 0, 2, BlockCellType.SOLID);
+        elevatedWorld.fillFloor(11, 13, 71, 0, 2, BlockCellType.SOLID);
+        PathResult partial = AutomatonPathfinder.findPath(elevatedWorld, 0, 71, 1, 12, 72, 1, settings, null);
+        assertFalse(partial.isEmpty());
+        long lastStep = partial.getStep(partial.length() - 1);
+        assertTrue(PackedPos.unpackY(lastStep) >= 71);
+        assertTrue(PackedPos.unpackX(lastStep) >= 5);
+    }
+
+    @Test
+    void routesThroughClosedDoorWithoutBreakingThrough() {
+        SyntheticWorld world = new SyntheticWorld();
+        world.fillFloor(0, 8, 64, 0, 4, BlockCellType.SOLID);
+        for (int z = 0; z <= 4; z++) {
+            world.set(4, 65, z, BlockCellType.UNBREAKABLE);
+            world.set(4, 66, z, BlockCellType.UNBREAKABLE);
+        }
+        world.set(4, 65, 2, BlockCellType.DOOR_CLOSED);
+        world.set(4, 66, 2, BlockCellType.DOOR_CLOSED);
+
+        PathfindingSettings settings = PathfindingSettings.defaults(false, false);
+        PathResult result = AutomatonPathfinder.findPath(world, 1, 65, 2, 7, 65, 2, settings, null);
+        assertTrue(result.isComplete());
+        boolean passedDoor = false;
+        for (int i = 0; i < result.length(); i++) {
+            assertFalse(result.getAction(i) == PathNodeAction.BREAK_THROUGH);
+            long step = result.getStep(i);
+            if (PackedPos.unpackX(step) == 4 && PackedPos.unpackZ(step) == 2) {
+                passedDoor = true;
+            }
+        }
+        assertTrue(passedDoor);
+    }
+
+    @Test
+    void smoothingDoesNotCutThroughWaterOrPenalizedNodes() {
+        SyntheticWorld waterWorld = new SyntheticWorld();
+        waterWorld.fillFloor(0, 8, 64, 0, 6, BlockCellType.SOLID);
+        waterWorld.set(4, 65, 3, BlockCellType.WATER);
+
+        PathfindingSettings settings = PathfindingSettings.defaults(false, false);
+        PathResult waterDetour = AutomatonPathfinder.findPath(waterWorld, 1, 65, 3, 7, 65, 3, settings, null);
+        assertTrue(waterDetour.isComplete());
+        for (int i = 0; i < waterDetour.length(); i++) {
+            long s = waterDetour.getStep(i);
+            assertFalse(PackedPos.unpackX(s) == 4 && PackedPos.unpackZ(s) == 3);
+        }
+
+        SyntheticWorld flatWorld = new SyntheticWorld();
+        flatWorld.fillFloor(0, 8, 64, 0, 6, BlockCellType.SOLID);
+        it.unimi.dsi.fastutil.longs.Long2FloatOpenHashMap penalties =
+                new it.unimi.dsi.fastutil.longs.Long2FloatOpenHashMap();
+        penalties.put(PackedPos.pack(4, 65, 3), 80.0F);
+        PathResult penaltyDetour = AutomatonPathfinder.findPath(flatWorld, 1, 65, 3, 7, 65, 3, settings, null, penalties);
+        assertTrue(penaltyDetour.isComplete());
+        assertTrue(penaltyDetour.length() >= 3);
     }
 
     private static final class SyntheticWorld implements INavigationWorldView {

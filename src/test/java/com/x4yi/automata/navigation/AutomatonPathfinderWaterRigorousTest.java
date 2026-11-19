@@ -8,15 +8,11 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-/**
- * Verifies 1x1 underwater tunnel traversal and water-to-dry-shore exit pathfinding.
- */
 class AutomatonPathfinderWaterRigorousTest {
 
     @Test
     void navigatesUnderwaterTunnelAndExitsOntoDryShore() {
         Map<Long, Byte> worldMap = new HashMap<>();
-        // Water pool x=0..6, y=61..63, solid roof over x=3..4 at y=62 (1x1 tunnel at y=61), dry shore x=7..12 at y=62
         for (int x = 0; x <= 12; x++) {
             for (int z = 0; z <= 4; z++) {
                 worldMap.put(PackedPos.pack(x, 59, z), BlockCellType.SOLID);

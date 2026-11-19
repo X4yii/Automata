@@ -21,12 +21,24 @@ class SrpCompatTest {
         assertFalse(Arrays.asList(removed).contains(SrpCompat.AUTOMATON_ENTITY_ID));
         assertEquals(2, removed.length);
 
-        // Inverted mode (whitelist): immune means NOT in the infectable whitelist.
         String[] whitelistImmune = SrpCompat.updateCothImmuneList(added, true, true);
         assertFalse(Arrays.asList(whitelistImmune).contains(SrpCompat.AUTOMATON_ENTITY_ID));
 
         String[] whitelistSusceptible = SrpCompat.updateCothImmuneList(base, true, false);
         assertTrue(Arrays.asList(whitelistSusceptible).contains(SrpCompat.AUTOMATON_ENTITY_ID));
+    }
+
+    @Test
+    void resolvesSrpWeaponKindsAndBookOfVengeance() {
+        assertEquals(SrpCompat.SrpWeaponKind.SCYTHE, SrpCompat.resolveSrpWeaponKindByPath("weapon_scythe"));
+        assertEquals(SrpCompat.SrpWeaponKind.SCYTHE, SrpCompat.resolveSrpWeaponKindByPath("weapon_scythe_sentient"));
+        assertEquals(SrpCompat.SrpWeaponKind.LANCE, SrpCompat.resolveSrpWeaponKindByPath("weapon_lance_sentient"));
+        assertEquals(SrpCompat.SrpWeaponKind.CLEAVER, SrpCompat.resolveSrpWeaponKindByPath("weapon_cleaver"));
+        assertEquals(SrpCompat.SrpWeaponKind.MAUL, SrpCompat.resolveSrpWeaponKindByPath("weapon_maul_sentient"));
+        assertEquals(SrpCompat.SrpWeaponKind.BOW, SrpCompat.resolveSrpWeaponKindByPath("weapon_bow"));
+        assertEquals(SrpCompat.SrpWeaponKind.BOOK_OF_VENGEANCE, SrpCompat.resolveSrpWeaponKindByPath("book_of_vengeance"));
+        assertEquals(SrpCompat.SrpWeaponKind.BOOK_OF_VENGEANCE, SrpCompat.resolveSrpWeaponKindByPath("the_book_of_vengeance"));
+        assertEquals(SrpCompat.SrpWeaponKind.NONE, SrpCompat.resolveSrpWeaponKindByPath("living_core"));
     }
 }
 

@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import com.x4yi.automata.ai.EquipmentSelector;
 import com.x4yi.automata.ai.IAutomatonJob;
-import com.x4yi.automata.movement.HumanMovementController.MovementMood;
+import com.x4yi.automata.movement.MovementPace;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -26,11 +26,11 @@ class AutomatonJobRegistryTest {
 
         registry.register(JobDescriptor.builder(idA, DummyJob::new)
                 .titleKey("Alpha")
-                .movementMood(MovementMood.CHILL)
+                .movementPace(MovementPace.NORMAL)
                 .build());
         registry.register(JobDescriptor.builder(idB, DummyJob::new)
                 .titleKey("Beta")
-                .movementMood(MovementMood.TRYHARD)
+                .movementPace(MovementPace.FAST)
                 .logisticsEligible(false)
                 .build());
 
@@ -38,7 +38,7 @@ class AutomatonJobRegistryTest {
         assertEquals(0, registry.indexOf(idA));
         assertEquals(1, registry.indexOf(idB));
         assertEquals(idB, registry.getByIndex(1).getId());
-        assertEquals(MovementMood.TRYHARD, registry.get(idB).getMovementMood());
+        assertEquals(MovementPace.FAST, registry.get(idB).getMovementPace());
         assertTrue(registry.get(idA).isLogisticsEligible());
     }
 
@@ -58,8 +58,8 @@ class AutomatonJobRegistryTest {
         assertEquals(AutomatonBuiltInJobs.IDLE, all.get(0).getId());
         assertEquals(AutomatonBuiltInJobs.EXCAVATION, all.get(1).getId());
         assertNotNull(AutomataAPI.getJob(AutomatonBuiltInJobs.FARMER));
-        assertTrue(AutomataAPI.getJob(AutomatonBuiltInJobs.DEFEND).isCombat());
-        assertEquals(2, AutomataAPI.getJob(AutomatonBuiltInJobs.DEFEND).getDecisionIntervalTicks());
+        assertTrue(AutomataAPI.getJob(AutomatonBuiltInJobs.GUARD).isCombat());
+        assertEquals(2, AutomataAPI.getJob(AutomatonBuiltInJobs.GUARD).getDecisionIntervalTicks());
         assertEquals("automata.job.automata.mine.name", AutomataAPI.getJob(AutomatonBuiltInJobs.MINE).getTitleKey());
         assertThrows(IllegalArgumentException.class, () -> AutomataAPI.requireInternalContext(null));
     }

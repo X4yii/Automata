@@ -41,8 +41,49 @@ class WeaponCombatProfileTest {
         assertTrue(heavy.prefersCrits());
         assertFalse(heavy.prefersSprintHits());
 
+        WeaponCombatProfile reachOne = WeaponCombatProfile.fromStats(1.0D, -2.5D, false, false);
+        assertEquals(WeaponCombatProfile.WeaponCombatStyle.POLEARM_REACH, reachOne.getStyle());
+        assertEquals(3.25D * 3.25D, reachOne.getIdealMinRangeSq(), 1.0E-4D);
+
+        WeaponCombatProfile reachTwo = WeaponCombatProfile.fromStats(2.0D, -2.5D, false, false);
+        assertEquals(WeaponCombatProfile.WeaponCombatStyle.POLEARM_REACH, reachTwo.getStyle());
+        assertEquals(4.25D * 4.25D, reachTwo.getIdealMinRangeSq(), 1.0E-4D);
+
         WeaponCombatProfile standard = WeaponCombatProfile.fromStats(0.0D, -2.4D, false, false);
         assertEquals(WeaponCombatProfile.WeaponCombatStyle.STANDARD_MELEE, standard.getStyle());
+        assertFalse(standard.prefersSprintHits());
+
+        WeaponCombatProfile caestus = WeaponCombatProfile.fromStats(0.0D, -0.5D, false, false, true);
+        assertEquals(WeaponCombatProfile.WeaponCombatStyle.RAPID_BRAWLER, caestus.getStyle());
+        assertTrue(caestus.prefersSprintHits());
+        assertFalse(caestus.prefersCrits());
+
+        WeaponCombatProfile fastSpamBySpeed = WeaponCombatProfile.fromStats(0.0D, -0.8D, false, false, false);
+        assertEquals(WeaponCombatProfile.WeaponCombatStyle.RAPID_BRAWLER, fastSpamBySpeed.getStyle());
+    }
+
+    @Test
+    void mapsSrpWeaponKindsToDistinctPlaystyles() {
+        WeaponCombatProfile scythe = WeaponCombatProfile.fromSrpKind(
+                com.x4yi.automata.compat.SrpCompat.SrpWeaponKind.SCYTHE, 1.5D, -2.6D);
+        assertEquals(WeaponCombatProfile.WeaponCombatStyle.POLEARM_REACH, scythe.getStyle());
+        assertFalse(scythe.prefersSprintHits());
+        assertEquals(4.5D, scythe.getAttackRange(), 1.0E-5D);
+
+        WeaponCombatProfile lance = WeaponCombatProfile.fromSrpKind(
+                com.x4yi.automata.compat.SrpCompat.SrpWeaponKind.LANCE, 2.0D, -2.5D);
+        assertEquals(WeaponCombatProfile.WeaponCombatStyle.POLEARM_REACH, lance.getStyle());
+        assertTrue(lance.prefersSprintHits());
+
+        WeaponCombatProfile cleaver = WeaponCombatProfile.fromSrpKind(
+                com.x4yi.automata.compat.SrpCompat.SrpWeaponKind.CLEAVER, 0.0D, -2.9D);
+        assertEquals(WeaponCombatProfile.WeaponCombatStyle.HEAVY_BREAKER, cleaver.getStyle());
+        assertTrue(cleaver.prefersCrits());
+
+        WeaponCombatProfile book = WeaponCombatProfile.fromSrpKind(
+                com.x4yi.automata.compat.SrpCompat.SrpWeaponKind.BOOK_OF_VENGEANCE, 0.0D, 0.0D);
+        assertEquals(WeaponCombatProfile.WeaponCombatStyle.VENGEANCE_CASTER, book.getStyle());
+        assertEquals(32.0D, book.getAttackRange(), 1.0E-5D);
     }
 }
 

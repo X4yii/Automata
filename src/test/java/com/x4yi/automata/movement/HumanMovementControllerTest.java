@@ -1,5 +1,6 @@
 package com.x4yi.automata.movement;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -14,6 +15,7 @@ class HumanMovementControllerTest {
         assertTrue(HumanMovementController.shouldTriggerStepJump(1.0D, 1.0D, 10.0F, false));
         assertFalse(HumanMovementController.shouldTriggerStepJump(0.9D, 0.0D, 60.0F, false));
         assertTrue(HumanMovementController.shouldTriggerStepJump(1.3D, 0.0D, 60.0F, true));
+        assertFalse(HumanMovementController.shouldTriggerStepJump(1.3D, 0.0D, 120.0F, true));
     }
 
     @Test
@@ -46,6 +48,28 @@ class HumanMovementControllerTest {
         assertFalse(HumanMovementController.needsPillarCentering(0.15D, -0.15D));
         assertTrue(HumanMovementController.needsPillarCentering(0.30D, 0.0D));
         assertTrue(HumanMovementController.needsPillarCentering(0.0D, -0.30D));
+    }
+
+    @Test
+    void capsCameraAngularVelocityAndBlendsInputsSmoothly() {
+        float nextYaw = CameraController.interpolateAngleCapped(0.0F, 170.0F, 0.5F, 32.0F);
+        assertEquals(32.0F, nextYaw, 1e-4F);
+
+        assertEquals(-0.35F, MotorController.blendMoveInput(-1.0F, 1.0F, 0.65F), 1e-4F);
+        assertTrue(MotorController.resolveSneakState(true, false, false));
+        assertFalse(MotorController.resolveSneakState(false, false, false));
+    }
+
+    @Test
+    void triggersBunnyhopOnlyOnClearStraightGroundWithThreeBlockHeadroom() {
+        assertTrue(MotorController.shouldTriggerBunnyhop(
+                true, true, false, false, false, false, 10.0F, true, true, 5.0F, true, true));
+        assertFalse(MotorController.shouldTriggerBunnyhop(
+                true, true, false, false, false, false, 10.0F, true, true, 5.0F, false, true));
+        assertFalse(MotorController.shouldTriggerBunnyhop(
+                true, true, false, false, false, false, 10.0F, true, true, 5.0F, true, false));
+        assertFalse(MotorController.shouldTriggerBunnyhop(
+                true, true, true, false, false, false, 10.0F, true, true, 5.0F, true, true));
     }
 }
 

@@ -1,10 +1,16 @@
 package com.x4yi.automata.entity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import org.junit.jupiter.api.Test;
 
 class EntityAutomatonSwimTest {
+
+    @Test
+    void aquaAcrobaticsCompatIsDisabledWhenModIsAbsent() {
+        assertFalse(EntityAutomaton.isAquaAcrobaticsLoaded());
+    }
 
     @Test
     void stepsAndClampsSwimAnimationBetweenZeroAndOne() {

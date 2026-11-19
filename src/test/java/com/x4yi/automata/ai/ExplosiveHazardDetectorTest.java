@@ -12,6 +12,9 @@ class ExplosiveHazardDetectorTest {
     void detectsModdedExplosiveRegistryIds() {
         assertTrue(ExplosiveHazardDetector.isModdedExplosiveId(new ResourceLocation("modded", "primed_c4_charge")));
         assertTrue(ExplosiveHazardDetector.isModdedExplosiveId(new ResourceLocation("srparasites", "bomb_spore")));
+        assertTrue(ExplosiveHazardDetector.isModdedExplosiveId(new ResourceLocation("srparasites", "orbboom")));
+        assertTrue(ExplosiveHazardDetector.isModdedExplosiveId(new ResourceLocation("srparasites", "nadeball")));
+        assertFalse(ExplosiveHazardDetector.isModdedExplosiveId(new ResourceLocation("srparasites", "cloudtoxic")));
         assertTrue(ExplosiveHazardDetector.isModdedExplosiveId(new ResourceLocation("tech", "nuke_core")));
         assertTrue(ExplosiveHazardDetector.isModdedExplosiveId(new ResourceLocation("tinkers", "dynamite_stick")));
 
@@ -34,6 +37,17 @@ class ExplosiveHazardDetectorTest {
                 new ResourceLocation("modded", "coth_cure_potion"), false, true));
         assertFalse(EquipmentSelector.isModdedConsumableId(
                 new ResourceLocation("minecraft", "apple"), true, true));
+    }
+
+    @Test
+    void enforcesOneBlockMarginAroundStaticAreaHazards() {
+        double[] push = new double[2];
+        assertTrue(ExplosiveHazardDetector.accumulateStaticHazardRepulsion(2.0D, 0.0D, 0.0D, 0.0D, 2.8D, push));
+        assertTrue(push[0] > 0.0D);
+
+        push[0] = 0.0D;
+        push[1] = 0.0D;
+        assertFalse(ExplosiveHazardDetector.accumulateStaticHazardRepulsion(3.0D, 0.0D, 0.0D, 0.0D, 2.8D, push));
     }
 }
 

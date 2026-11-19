@@ -47,6 +47,22 @@ class SquadBlackboardTest {
     }
 
     @Test
+    void buildSpaceClaimGuidesNearbyAlliesToYield() {
+        SquadBlackboard board = new SquadBlackboard();
+        BlockPos pillarPos = new BlockPos(10, 64, 10);
+        board.claimBuildSpace(1, pillarPos, 100L, 20L);
+
+        assertTrue(board.isBuilderClaiming(1, 110L));
+        assertFalse(board.isBuilderClaiming(2, 110L));
+
+        double[] vec = new double[2];
+        assertTrue(board.computeYieldVector(2, 11.2D, 64.0D, 10.5D, 7.84D, 110L, vec));
+        assertTrue(vec[0] > 0.0D);
+        assertFalse(board.computeYieldVector(1, 10.5D, 64.0D, 10.5D, 7.84D, 110L, vec));
+        assertFalse(board.computeYieldVector(2, 11.2D, 64.0D, 10.5D, 7.84D, 125L, vec));
+    }
+
+    @Test
     void resistsNonPositiveTtlAndConcurrentContention() throws InterruptedException {
         SquadBlackboard board = new SquadBlackboard();
         BlockPos contested = new BlockPos(-100, 64, 250);
@@ -126,6 +142,107 @@ class SquadBlackboardTest {
 
         board.reportReviveInProgress(4, 3, new BlockPos(10, 64, 0), 10L);
         assertTrue(board.findNearestDowned(1, self, 12L) == null);
+    }
+
+    @Test
+    void tryClaimReviveDutyPreventsStampedeAndAllowsCloserHandoff() {
+        SquadBlackboard board = new SquadBlackboard();
+        BlockPos pos = new BlockPos(10, 64, 10);
+
+        assertTrue(board.tryClaimReviveDuty(10, 99, pos, 100.0D, 50L));
+        assertFalse(board.tryClaimReviveDuty(11, 99, pos, 81.0D, 51L));
+        assertTrue(board.tryClaimReviveDuty(12, 99, pos, 9.0D, 52L));
+    }
+
+    @Test
+    void targetAssignmentSeparatesMeleeAndRangedAndAllowsProximityHandoff() {
+        SquadBlackboard board = new SquadBlackboard();
+        int targetId = 500;
+
+        assertTrue(board.tryClaimTarget(1, targetId, false, 400.0D, 1, 10L, 25L));
+        assertTrue(board.tryClaimTarget(2, targetId, true, 225.0D, 1, 11L, 25L));
+        assertEquals(1, board.getAssignedMeleeCount(targetId, 3, 256.0D, 12L));
+
+        assertFalse(board.tryClaimTarget(3, targetId, false, 256.0D, 1, 12L, 25L));
+        assertTrue(board.tryClaimTarget(4, targetId, false, 16.0D, 1, 12L, 25L));
+        assertEquals(1, board.getAssignedMeleeCount(targetId, 3, 16.0D, 12L));
+
+        board.releaseTarget(4, targetId);
+        assertEquals(0, board.getAssignedMeleeCount(targetId, 3, 16.0D, 12L));
+    }
+
+    @Test
+    void vengeanceSlamClaimPreventsOverkillOnNonBossAndAllowsMultiSlamOnBoss() {
+        SquadBlackboard board = new SquadBlackboard();
+        int mobId = 777;
+
+        assertTrue(board.tryClaimVengeanceSlam(1, mobId, false, 100L, 30L));
+        assertTrue(board.isVengeanceSlamClaimedByOther(2, mobId, 110L));
+        assertFalse(board.tryClaimVengeanceSlam(2, mobId, false, 110L, 30L));
+
+        assertTrue(board.tryClaimVengeanceSlam(2, mobId, true, 110L, 30L));
+
+        board.releaseVengeanceSlam(1, mobId);
+        assertFalse(board.isVengeanceSlamClaimedByOther(2, mobId, 111L));
+    }
+
+    @Test
+    void priorityTargetAlertsPropagateBestWeight() {
+        SquadBlackboard board = new SquadBlackboard();
+        int targetId = 888;
+
+        assertEquals(1.0D, board.getPriorityMultiplier(targetId, 50L));
+        board.reportPriorityTarget(1, targetId, 0.35D, 50L, 30L);
+        assertEquals(0.35D, board.getPriorityMultiplier(targetId, 55L));
+
+        board.reportPriorityTarget(2, targetId, 0.25D, 56L, 30L);
+        assertEquals(0.25D, board.getPriorityMultiplier(targetId, 60L));
+        assertEquals(1.0D, board.getPriorityMultiplier(targetId, 90L));
+    }
+
+    @Test
+    void assignsDistinctFlankAnglesToMeleeAttackersAroundSameTarget() {
+        SquadBlackboard board = new SquadBlackboard();
+        int targetId = 999;
+
+        assertTrue(board.tryClaimTarget(10, targetId, false, 9.0D, 3, 100L, 30L));
+        assertTrue(board.tryClaimTarget(20, targetId, false, 9.0D, 3, 100L, 30L));
+        assertTrue(board.tryClaimTarget(30, targetId, true, 100.0D, 3, 100L, 30L));
+
+        double angle1 = board.getAssignedFlankAngleRad(10, targetId, 105L);
+        double angle2 = board.getAssignedFlankAngleRad(20, targetId, 105L);
+        double rangedAngle = board.getAssignedFlankAngleRad(30, targetId, 105L);
+
+        assertFalse(Double.isNaN(angle1));
+        assertFalse(Double.isNaN(angle2));
+        assertTrue(Double.isNaN(rangedAngle));
+        assertEquals(Math.PI, Math.abs(angle2 - angle1), 1e-6);
+    }
+
+    @Test
+    void computesDeterministicSquadWorkerPartitionIndices() {
+        int[] p1 = SquadBlackboard.computeSquadWorkerIndex(15, java.util.List.of(30, 5));
+        int[] p2 = SquadBlackboard.computeSquadWorkerIndex(5, java.util.List.of(30, 15));
+        int[] p3 = SquadBlackboard.computeSquadWorkerIndex(30, java.util.List.of(15, 5));
+
+        assertEquals(3, p1[1]);
+        assertEquals(1, p1[0]);
+        assertEquals(0, p2[0]);
+        assertEquals(2, p3[0]);
+    }
+
+    @Test
+    void cachesThreatProfileUntilTtlExpires() {
+        SquadBlackboard board = new SquadBlackboard();
+        int[] calls = {0};
+
+        String first = board.getOrComputeThreatProfile(42, 100L, 10L, () -> "v" + (++calls[0]));
+        String second = board.getOrComputeThreatProfile(42, 105L, 10L, () -> "v" + (++calls[0]));
+        String third = board.getOrComputeThreatProfile(42, 111L, 10L, () -> "v" + (++calls[0]));
+
+        assertEquals("v1", first);
+        assertEquals("v1", second);
+        assertEquals("v2", third);
     }
 }
 

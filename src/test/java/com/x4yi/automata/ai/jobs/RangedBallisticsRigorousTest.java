@@ -5,10 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import net.minecraft.util.math.MathHelper;
 import org.junit.jupiter.api.Test;
 
-/**
- * Simulates real Minecraft arrow physics tick-by-tick to verify {@link RangedCombatController#computeBowAimAngles}
- * hits stationary and moving targets at 16, 32, 64 horizontal blocks and +/-40 vertical blocks.
- */
 class RangedBallisticsRigorousTest {
 
     @Test
