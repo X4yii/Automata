@@ -27,7 +27,7 @@ gradle-app.setting
 .gradletasknamecache
 local.properties
 !**/gradle/wrapper/gradle-wrapper.jar
-
+**/test/
 # Maven
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar

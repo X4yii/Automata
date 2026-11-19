@@ -58,16 +58,40 @@ repositories {
         }
     }
     mavenCentral()
+    maven {
+        name 'Modrinth'
+        url 'https://api.modrinth.com/maven'
+    }
+    maven {
+        name 'JitPack'
+        url 'https://jitpack.io'
+    }
+}
+
+configurations {
+    devMods
 }
 
 dependencies {
     implementation cleanroom.userdev(cleanroom_version) {
         accessTransformers.from(accessTransformerNames.collect { "src/main/resources/META-INF/$it" })
     }
-    implementation deobf(files('/home/x4yi/Documentos/x4ui/build/libs/x4ui-r1.0b6.jar'))
+    implementation deobf('maven.modrinth:x4ui:r1.0b7')
     implementation deobf('curse.maven:hwyla-253449:2568751')
     runtimeOnly 'curse.maven:u-team-core-273744:2873111'
     runtimeOnly 'curse.maven:useful-backpacks-274338:3104697'
+    [
+        'SpartanWeaponry-1.12.2-1.6.1.jar',
+        'SpartanShields-1.12.2-1.5.5.jar',
+        'SRParasites-1.10.9.jar',
+        'AquaAcrobatics-1.15.4.jar',
+        '+Fugue-0.25.5.jar'
+    ].each { jarName ->
+        def modJar = file("/home/x4yi/.var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher/instances/pene/minecraft/mods/${jarName}")
+        if (modJar.exists()) {
+            devMods deobf(files(modJar))
+        }
+    }
     if (dependOnHei) {
         implementation 'mezz:jei:4.36.1:dev'
     } else {
@@ -125,6 +149,15 @@ jar {
 
 tasks.withType(Checkstyle).configureEach {
     enabled = enable_checkstyle.toBoolean()
+}
+
+tasks.register('syncDevMods', Copy) {
+    from configurations.devMods
+    into layout.projectDirectory.dir('run/client/mods')
+}
+
+tasks.named('runClient') {
+    dependsOn 'syncDevMods'
 }
 
 tasks.matching { it.name in ['clearSkiesCheck', 'formatJavaCheck'] }.configureEach {
