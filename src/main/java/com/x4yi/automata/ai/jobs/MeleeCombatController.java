@@ -341,42 +341,12 @@ final class MeleeCombatController {
     }
 
     static void equipShieldIfAvailable(EntityAutomaton bot) {
-        if (com.x4yi.automata.compat.SpartanWeaponryCompat.isTwoHanded(bot.getHeldItemMainhand())) {
-            unequipOffhandForTwoHanded(bot);
-            return;
-        }
-        if (EquipmentSelector.isShieldItem(bot.getHeldItemOffhand())) {
-            return;
-        }
-        IItemHandlerModifiable inv = bot.getInventory().getCombinedInventory();
-        for (int i = 0; i < inv.getSlots(); i++) {
-            ItemStack candidate = inv.getStackInSlot(i);
-            if (EquipmentSelector.isShieldItem(candidate)) {
-                ItemStack prevOff = bot.getHeldItemOffhand().copy();
-                ItemStack shield = inv.extractItem(i, 1, false);
-                bot.setHeldItem(EnumHand.OFF_HAND, shield);
-                if (!prevOff.isEmpty()) {
-                    inv.insertItem(i, prevOff, false);
-                }
-                return;
-            }
-        }
+        long worldTime = bot.world != null ? bot.world.getTotalWorldTime() : 0L;
+        com.x4yi.automata.ai.OffhandPolicy.applyOffhand(bot, true, worldTime);
     }
 
     static void unequipOffhandForTwoHanded(EntityAutomaton bot) {
-        ItemStack off = bot.getHeldItemOffhand();
-        if (off.isEmpty()) {
-            return;
-        }
-        if (bot.isHandActive() && bot.getActiveHand() == EnumHand.OFF_HAND) {
-            bot.resetActiveHand();
-        }
-        ItemStack remainder = net.minecraftforge.items.ItemHandlerHelper.insertItemStacked(
-                bot.getInventory().getCombinedInventory(), off.copy(), false);
-        bot.setHeldItem(EnumHand.OFF_HAND, ItemStack.EMPTY);
-        if (!remainder.isEmpty()) {
-            bot.entityDropItem(remainder, 0.0F);
-        }
+        com.x4yi.automata.ai.OffhandPolicy.unequipOffhand(bot);
     }
 }
 

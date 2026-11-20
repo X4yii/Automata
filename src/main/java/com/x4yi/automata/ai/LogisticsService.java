@@ -212,7 +212,10 @@ public final class LogisticsService {
             }
         }
         if (bot.getHeldItemOffhand().isEmpty()
-                && !com.x4yi.automata.compat.SpartanWeaponryCompat.isTwoHanded(bot.getHeldItemMainhand())) {
+                && !com.x4yi.automata.compat.ModCompatBridge.isTwoHandedWeapon(bot.getHeldItemMainhand())) {
+            boolean allowTorch = com.x4yi.automata.config.AutomataConfig.preferTorchOffhandForDynamicLightOwners
+                    && com.x4yi.automata.world.OwnerCapabilityRegistry.hasDynamicLights(bot.getOwnerUuid());
+            int torchIdx = -1;
             for (int i = 0; i < chest.getSlots(); i++) {
                 ItemStack candidate = chest.getStackInSlot(i);
                 if (!candidate.isEmpty()
@@ -222,8 +225,18 @@ public final class LogisticsService {
                     if (!extracted.isEmpty()) {
                         bot.setHeldItem(net.minecraft.util.EnumHand.OFF_HAND, extracted);
                         changed = true;
+                        torchIdx = -1;
                         break;
                     }
+                } else if (allowTorch && torchIdx < 0 && OffhandPolicy.isTorchItem(candidate)) {
+                    torchIdx = i;
+                }
+            }
+            if (torchIdx >= 0) {
+                ItemStack extracted = chest.extractItem(torchIdx, 1, false);
+                if (!extracted.isEmpty()) {
+                    bot.setHeldItem(net.minecraft.util.EnumHand.OFF_HAND, extracted);
+                    changed = true;
                 }
             }
         }

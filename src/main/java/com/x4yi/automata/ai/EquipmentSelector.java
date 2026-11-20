@@ -275,13 +275,8 @@ public final class EquipmentSelector {
     }
 
     private static void clearOffhandIfTwoHanded(EntityAutomaton automaton, IItemHandlerModifiable inv) {
-        ItemStack equipped = automaton.getHeldItemMainhand();
-        if (!equipped.isEmpty() && com.x4yi.automata.compat.SpartanWeaponryCompat.isTwoHanded(equipped)) {
-            ItemStack offhand = automaton.getHeldItemOffhand();
-            if (!offhand.isEmpty()) {
-                ItemStack remainder = net.minecraftforge.items.ItemHandlerHelper.insertItemStacked(inv, offhand.copy(), false);
-                automaton.setHeldItem(EnumHand.OFF_HAND, remainder);
-            }
+        if (com.x4yi.automata.compat.ModCompatBridge.isTwoHandedWeapon(automaton.getHeldItemMainhand())) {
+            OffhandPolicy.unequipOffhand(automaton);
         }
     }
 

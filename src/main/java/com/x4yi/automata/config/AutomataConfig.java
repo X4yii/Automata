@@ -63,6 +63,20 @@ public final class AutomataConfig {
     @Config.RangeInt(min = 4, max = 48)
     public static int mineSearchRadius = 16;
 
+    @Config.Comment("When true, automata owned by a player with client-side dynamic lights (e.g. OptiFine) hold a torch in offhand outside combat.")
+    public static boolean preferTorchOffhandForDynamicLightOwners = false;
+
+    @Config.Comment("Client-side dynamic light providers checked on join/settings-close. Format: 'modid' or 'modid:ClassName#methodName'.")
+    public static String[] dynamicLightProviders = {
+            "optifine:Config#isDynamicLights",
+            "celeritasdynamiclights",
+            "nothiriumdynamiclights",
+            "dynamiclights_celeritas"
+    };
+
+    @Config.Comment("Extra item registry IDs treated as offhand torches for dynamic lighting.")
+    public static String[] offhandTorchItems = {};
+
     @Config.Comment("Default entity ID blacklist copied to newly spawned automata.")
     public static String[] defaultEntityBlacklist = {
             "minecraft:villager",

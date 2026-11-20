@@ -140,6 +140,9 @@ public class AutomatonBrain {
         if (BudgetedTickScheduler.shouldRun(worldTime, entityId, BLACKBOARD_PRUNE_INTERVAL, server)) {
             context.getBlackboard().pruneExpired(worldTime);
         }
+        if (BudgetedTickScheduler.shouldRun(worldTime, entityId, 10, server)) {
+            OffhandPolicy.applyOffhand(bot, false, worldTime);
+        }
 
         boolean refreshOccupancy = cachedOccupancy < 0.0F || activeBehavior == BrainBehavior.LOGISTICS;
         if (BudgetedTickScheduler.shouldRun(worldTime, entityId, INVENTORY_MANAGE_INTERVAL_TICKS, server)) {
