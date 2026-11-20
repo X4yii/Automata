@@ -44,7 +44,16 @@ public class CommandAutomata extends CommandBase {
     public void execute(MinecraftServer server, ICommandSender sender, String[] args) throws CommandException {
         if (args.length >= 1 && "reload".equalsIgnoreCase(args[0])) {
             com.x4yi.automata.ai.jobs.ModdedOreCatalog.reload();
+            com.x4yi.automata.config.IntegrationOverrides.reload();
             sender.sendMessage(new TextComponentTranslation("commands.automata.reload.success"));
+            return;
+        }
+        if (args.length >= 1 && "integration-report".equalsIgnoreCase(args[0])) {
+            executeIntegrationReport(server, sender);
+            return;
+        }
+        if (args.length >= 2 && "diag".equalsIgnoreCase(args[0])) {
+            executeDiag(sender, args[1]);
             return;
         }
         if (args.length >= 1 && "bench".equalsIgnoreCase(args[0])) {
@@ -67,6 +76,35 @@ public class CommandAutomata extends CommandBase {
         }
         world.spawnEntity(bot);
         sender.sendMessage(new TextComponentTranslation("commands.automata.spawn.success", bot.getEntityId()));
+    }
+
+    private void executeDiag(ICommandSender sender, String targetArg) throws CommandException {
+        int entityId = parseInt(targetArg, 0);
+        net.minecraft.entity.Entity entity = sender.getEntityWorld().getEntityByID(entityId);
+        if (!(entity instanceof EntityAutomaton bot)) {
+            sender.sendMessage(new TextComponentString("[Automata] Automaton #" + entityId + " not found"));
+            return;
+        }
+        List<String> lines = bot.getBrain().getContext().getDecisionTrace().snapshotRecent(15);
+        sender.sendMessage(new TextComponentString(
+                "[Automata #" + entityId + "] Job=" + bot.getTaskConfig().getJobId()
+                        + " (" + lines.size() + " trace entries)"));
+        for (String line : lines) {
+            sender.sendMessage(new TextComponentString("  " + line));
+        }
+    }
+
+    private void executeIntegrationReport(MinecraftServer server, ICommandSender sender) {
+        File dataDir = server != null ? server.getDataDirectory() : new File(".");
+        Path out = (dataDir != null ? dataDir.toPath() : Paths.get("."))
+                .resolve("config")
+                .resolve("automata_integration_report.txt");
+        try {
+            Path written = com.x4yi.automata.compat.IntegrationReportGenerator.writeReport(out);
+            sender.sendMessage(new TextComponentString("[Automata] Integration report written: " + written));
+        } catch (Exception e) {
+            sender.sendMessage(new TextComponentString("[Automata] Integration report failed: " + e.getMessage()));
+        }
     }
 
     private void executeBench(MinecraftServer server, ICommandSender sender, String[] args) throws CommandException {

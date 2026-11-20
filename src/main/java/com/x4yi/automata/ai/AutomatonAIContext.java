@@ -92,6 +92,7 @@ public class AutomatonAIContext implements IAutomatonContext {
     private EntityLivingBase cachedPrimaryTarget;
     private final List<EntityAutomaton> scratchVulnerableAllies = new ArrayList<>(8);
     private final List<EntityAutomaton> scratchHealthyAllies = new ArrayList<>(16);
+    private final DecisionTrace decisionTrace = new DecisionTrace();
     @Nullable
     private com.x4yi.automata.ai.jobs.ThreatFieldEvaluator.ThreatAssessment cachedThreatAssessment;
     private long cachedThreatTick = Long.MIN_VALUE;
@@ -140,6 +141,14 @@ public class AutomatonAIContext implements IAutomatonContext {
 
     public AutomatonTaskConfig getTaskConfig() {
         return automaton.getTaskConfig();
+    }
+
+    public DecisionTrace getDecisionTrace() {
+        return decisionTrace;
+    }
+
+    public void recordDecision(String category, String detail) {
+        decisionTrace.record(getWorldTime(), category, detail);
     }
 
     public HumanMovementController getMovement() {

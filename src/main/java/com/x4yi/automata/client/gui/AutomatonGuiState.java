@@ -107,6 +107,8 @@ public final class AutomatonGuiState {
         });
     }
 
+    private final List<String> decisionTrace = new ArrayList<>();
+
     public void addSnapshotListener(Runnable listener) {
         snapshotListeners.add(listener);
     }
@@ -178,6 +180,8 @@ public final class AutomatonGuiState {
             }
             chunkTickets = tag.getInteger("ChunkTickets");
             hasPath = tag.getBoolean("HasPath");
+            decisionTrace.clear();
+            decisionTrace.addAll(com.x4yi.automata.ai.DecisionTrace.readFromNbt(tag, "DecisionTrace"));
         } finally {
             applyingSnapshot = false;
         }
@@ -216,6 +220,10 @@ public final class AutomatonGuiState {
 
     public boolean hasPath() {
         return hasPath;
+    }
+
+    public List<String> getDecisionTrace() {
+        return Collections.unmodifiableList(decisionTrace);
     }
 
     public boolean isApplyingSnapshot() {

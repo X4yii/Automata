@@ -46,6 +46,15 @@ public final class TelemetryTabView {
                 + "- **Has Active Path:** `" + state.hasPath() + "`\n"
                 + "- **Loaded Chunk Tickets:** `" + state.getChunkTickets() + "`\n"
                 + "- **Max Path Threads:** `" + AutomataConfig.maxPathfindingThreads + "`\n";
+        java.util.List<String> trace = state.getDecisionTrace();
+        if (!trace.isEmpty()) {
+            StringBuilder sb = new StringBuilder(md);
+            sb.append("\n### Decision Trace\n");
+            for (String entry : trace) {
+                sb.append("- `").append(entry).append("`\n");
+            }
+            md = sb.toString();
+        }
         markdown.setText(md);
     }
 

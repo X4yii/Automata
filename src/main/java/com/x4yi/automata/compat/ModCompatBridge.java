@@ -96,11 +96,36 @@ public final class ModCompatBridge {
     }
 
     public static boolean isTwoHandedWeapon(ItemStack stack) {
-        return !stack.isEmpty() && SpartanWeaponryCompat.isTwoHanded(stack);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        com.x4yi.automata.config.IntegrationOverrides.WeaponOverride ov =
+                com.x4yi.automata.config.IntegrationOverrides.getWeaponOverride(stack.getItem().getRegistryName());
+        if (ov != null) {
+            return ov.twoHanded();
+        }
+        return SpartanWeaponryCompat.isTwoHanded(stack);
     }
 
     public static TacticalDirective resolveTacticalDirective(@Nullable Entity entity) {
-        if (entity == null || !SrpCompat.isSrpLoaded()) {
+        if (entity == null) {
+            return TacticalDirective.DEFAULT;
+        }
+        ResourceLocation key = EntityList.getKey(entity);
+        com.x4yi.automata.config.IntegrationOverrides.EntityTacticOverride ov =
+                com.x4yi.automata.config.IntegrationOverrides.getEntityOverride(key);
+        if (ov != null) {
+            return new TacticalDirective(
+                    ov.preferredMinRange() * ov.preferredMinRange(),
+                    ov.preferredMaxRange() * ov.preferredMaxRange(),
+                    ov.waitForLandingWhenMelee(),
+                    ov.fleeWhenSwelling(),
+                    ov.prioritizeCritOnLanding(),
+                    ov.highPriorityFocus(),
+                    ov.avoidMeleeRush(),
+                    ov.threatWeightMultiplier());
+        }
+        if (!SrpCompat.isSrpLoaded()) {
             return TacticalDirective.DEFAULT;
         }
         SrpTacticalClassifier.SrpCombatProfile p = SrpTacticalClassifier.classify(entity);
