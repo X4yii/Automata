@@ -98,6 +98,8 @@ public class EntityAutomaton extends EntityCreature {
     private final AutomatonInventory inventory = new AutomatonInventory();
     private final AutomatonChunkLoader chunkLoader = new AutomatonChunkLoader(this);
     private final HumanMovementController movementController = new HumanMovementController(this);
+    private final com.x4yi.automata.movement.WingFlightController wingFlightController =
+            new com.x4yi.automata.movement.WingFlightController();
     private final AutomatonTaskConfig taskConfig = new AutomatonTaskConfig();
     private final AutomatonBrain brain = new AutomatonBrain(this);
 
@@ -484,6 +486,10 @@ public class EntityAutomaton extends EntityCreature {
         return movementController;
     }
 
+    public com.x4yi.automata.movement.WingFlightController getWingFlightController() {
+        return wingFlightController;
+    }
+
     public AutomatonTaskConfig getTaskConfig() {
         return taskConfig;
     }
@@ -622,6 +628,7 @@ public class EntityAutomaton extends EntityCreature {
                 }
                 if (world instanceof WorldServer worldServer) {
                     com.x4yi.automata.compat.ModCompatBridge.tickEntityCompat(this, worldServer);
+                    wingFlightController.tickServer(this);
                 }
                 tickHungerAndHealing();
                 if (getOwnerUuid() != null) {

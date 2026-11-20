@@ -56,6 +56,7 @@ public class AutomataMod {
     public void preInit(FMLPreInitializationEvent event) {
         LOGGER.info("Initializing {} v{}", MOD_NAME, VERSION);
         com.x4yi.automata.ai.jobs.ModdedOreCatalog.init(event.getModConfigurationDirectory());
+        com.x4yi.automata.config.IntegrationOverrides.init(event.getModConfigurationDirectory());
         AutomataAPI.ensureBuiltInsRegistered();
         ForgeChunkManager.setForcedChunkLoadingCallback(this, new AutomatonChunkLoader.Callback());
         GameRegistry.registerWorldGenerator(new AutomatonCampGenerator(), 10);
@@ -111,6 +112,13 @@ public class AutomataMod {
                     if (!held.isEmpty() && held.getItem() instanceof ItemAutomaStaff) {
                         ItemAutomaStaff.setActiveMode(held, com.x4yi.automata.item.AutomaStaffMode.fromName(data.getString("staffMode")));
                     }
+                });
+        UINetwork.registerActionHandler(
+                "automata:client_caps",
+                ActionGuard.require((player) -> player != null),
+                (player, actionId, data) -> {
+                    boolean dynamicLights = data != null && data.getBoolean("dynamicLights");
+                    com.x4yi.automata.world.OwnerCapabilityRegistry.setDynamicLights(player.getUniqueID(), dynamicLights);
                 });
         UINetwork.registerActionHandler(
                 "automata:staff_left_click_entity",
@@ -249,6 +257,7 @@ public class AutomataMod {
         com.x4yi.automata.bench.InGameBenchmarkProfiler.stopAndWriteReport();
         com.x4yi.automata.ai.WorldEntitySpatialIndex.clearAll();
         com.x4yi.automata.compat.ClaimProtectionCompat.clearAlerts();
+        com.x4yi.automata.world.OwnerCapabilityRegistry.clearAll();
         PathfindingExecutor.shutdown();
         SquadRegistry.clearAll();
     }

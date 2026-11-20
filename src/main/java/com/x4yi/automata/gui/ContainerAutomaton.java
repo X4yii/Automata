@@ -71,7 +71,9 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
 
     private static final int BOT_SLOT_COUNT = 34;
     private static final int TOTAL_SLOT_COUNT = 70;
-    public static final int BACKPACK_SLOT_START = TOTAL_SLOT_COUNT;
+    public static final int BAUBLE_SLOT_START = TOTAL_SLOT_COUNT;
+    public static final int BAUBLE_SLOT_COUNT = com.x4yi.automata.compat.BaublesCompat.BAUBLE_SLOT_COUNT;
+    public static final int BACKPACK_SLOT_START = BAUBLE_SLOT_START + BAUBLE_SLOT_COUNT;
 
     private final EntityAutomaton bot;
     private final EntityPlayer player;
@@ -115,6 +117,22 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
         }
         for (int col = 0; col < 9; col++) {
             addSlotToContainer(new Slot(player.inventory, col, -9999, -9999));
+        }
+
+        IItemHandlerModifiable baublesInv = bot.getInventory().getBaublesInventory();
+        for (int i = 0; i < BAUBLE_SLOT_COUNT; i++) {
+            final int baubleIdx = i;
+            addSlotToContainer(new SlotItemHandler(baublesInv, baubleIdx, -9999, -9999) {
+                @Override
+                public boolean isItemValid(@Nonnull ItemStack stack) {
+                    return com.x4yi.automata.compat.BaublesCompat.canEquipInSlot(stack, baubleIdx, bot);
+                }
+
+                @Override
+                public int getSlotStackLimit() {
+                    return 1;
+                }
+            });
         }
 
         this.maxBackpackSlots = Math.max(1, com.x4yi.automata.compat.UsefulBackpacksCompat.getMaxConfiguredBackpackSlots());
@@ -502,6 +520,7 @@ public class ContainerAutomaton extends Container implements IServerActionHandle
         tag.setFloat("LoadRatio", LogisticsService.getInventoryOccupancyRatio(bot.getInventory().getMainInventory()));
         tag.setInteger("ChunkTickets", bot.getBrain().getContext().getWorld().getPersistentChunks().size());
         tag.setBoolean("HasPath", !bot.getNavigator().noPath());
+        bot.getBrain().getContext().getDecisionTrace().writeToNbt(tag, "DecisionTrace", 12);
 
         ItemStack backpackStack = bot.getInventory().getBackpackSlot().getStackInSlot(0);
         if (!backpackStack.isEmpty()) {

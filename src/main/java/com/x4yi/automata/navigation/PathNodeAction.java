@@ -10,6 +10,8 @@ public final class PathNodeAction {
     public static final byte PILLAR_UP = 4;
     public static final byte BRIDGE = 5;
     public static final byte BREAK_THROUGH = 6;
+    public static final byte FLY = 7;
+    public static final byte GLIDE_DOWN = 8;
 
     private PathNodeAction() {}
 }

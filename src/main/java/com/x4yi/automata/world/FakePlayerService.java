@@ -133,6 +133,7 @@ public final class FakePlayerService {
         fake.motionY = automaton.motionY;
         fake.motionZ = automaton.motionZ;
         fake.onGround = automaton.onGround;
+        com.x4yi.automata.compat.BaublesCompat.syncToFakePlayer(automaton.getInventory(), fake);
         return fake;
     }
 
@@ -261,7 +262,9 @@ public final class FakePlayerService {
     public static void tickEquippedItemEffects(WorldServer world, EntityAutomaton automaton) {
         ItemStack main = automaton.getHeldItemMainhand();
         ItemStack off = automaton.getHeldItemOffhand();
-        boolean needsTick = hasCustomItemTickLogic(main, false) || hasCustomItemTickLogic(off, false);
+        boolean hasBaubles = com.x4yi.automata.compat.BaublesCompat.isLoaded()
+                && com.x4yi.automata.compat.BaublesCompat.hasAnyWornBauble(automaton.getInventory());
+        boolean needsTick = hasBaubles || hasCustomItemTickLogic(main, false) || hasCustomItemTickLogic(off, false);
         if (!needsTick) {
             for (EntityEquipmentSlot slot : ARMOR_SLOTS) {
                 if (hasCustomItemTickLogic(automaton.getItemStackFromSlot(slot), true)) {
@@ -273,6 +276,14 @@ public final class FakePlayerService {
         if (!needsTick) {
             return;
         }
+        boolean hasBadPotion = false;
+        for (net.minecraft.potion.PotionEffect effect : automaton.getActivePotionEffects()) {
+            if (effect != null && effect.getPotion().isBadEffect()) {
+                hasBadPotion = true;
+                break;
+            }
+        }
+        final boolean sneakForArmorSetBonus = hasBadPotion;
         runGuarded(world, automaton, "tickEquippedItemEffects", null, fake -> {
             ItemStack syncedMain = fake.inventory.mainInventory.get(0);
             if (hasCustomItemTickLogic(syncedMain, false)) {
@@ -282,12 +293,20 @@ public final class FakePlayerService {
             if (hasCustomItemTickLogic(syncedOff, false)) {
                 syncedOff.getItem().onUpdate(syncedOff, world, fake, 40, false);
             }
+            boolean prevSneak = fake.isSneaking();
+            if (sneakForArmorSetBonus) {
+                fake.setSneaking(true);
+            }
             for (int i = 0; i < ARMOR_SLOTS.length; i++) {
                 ItemStack armor = fake.inventory.armorInventory.get(i);
                 if (hasCustomItemTickLogic(armor, true)) {
                     armor.getItem().onArmorTick(world, fake, armor);
                 }
             }
+            if (sneakForArmorSetBonus) {
+                fake.setSneaking(prevSneak);
+            }
+            com.x4yi.automata.compat.BaublesCompat.tickWornBaubles(automaton.getInventory(), fake);
             syncEquipmentBack(fake, automaton);
             return null;
         });

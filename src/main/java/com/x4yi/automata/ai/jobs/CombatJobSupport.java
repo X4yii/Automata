@@ -256,6 +256,10 @@ public final class CombatJobSupport {
             return;
         }
 
+        if (AerialCombatController.tickAerialCombat(ctx, bot, target, state)) {
+            ctx.recordDecision("COMBAT", "Aerial wings maneuver vs " + target.getName());
+        }
+
         if (!(target instanceof EntityEnderman)
                 && (isWithinBowRange(bot, target) || AdaptiveThreatAnalyzer.isAerialThreat(bot, target))
                 && !bot.isInWater()

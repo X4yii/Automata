@@ -84,6 +84,16 @@ public final class OverviewTabView {
         }), btn -> btn.withSize(68, 16).withVisible(false));
         gearCard.add(handsRow);
         this.backpackLabel = gearCard.add(GuiLabel.of(state.getBackpackSummary(), AutomataUiTheme.COLOR_MUTED));
+        gearCard.add(GuiLabel.of(tr("gui.automata.overview.baubles", "Accessories (Baubles)"), AutomataUiTheme.COLOR_MUTED));
+        GuiPanel baublesRow = GuiPanel.row(2)
+                .withHugContent(true)
+                .withAlignItems(FlexAlign.CENTER);
+        baublesRow.withSize(0, 18);
+        for (int i = 0; i < ContainerAutomaton.BAUBLE_SLOT_COUNT; i++) {
+            GuiSlot slot = baublesRow.add(GuiSlot.of(container.getSlot(ContainerAutomaton.BAUBLE_SLOT_START + i), screen));
+            allGuiSlots.add(slot);
+        }
+        gearCard.add(baublesRow);
         root.add(gearCard);
 
         this.backpackDrawer = new GuiPanel(0, 0, 159, 220)

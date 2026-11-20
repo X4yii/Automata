@@ -18,8 +18,20 @@ import com.x4yi.automata.compat.UsefulBackpacksCompat;
 public class AutomatonInventory {
 
     public static final int MAIN_SLOTS = 27;
+    public static final int BAUBLE_SLOTS = com.x4yi.automata.compat.BaublesCompat.BAUBLE_SLOT_COUNT;
 
     private final ItemStackHandler mainInventory = new ItemStackHandler(MAIN_SLOTS);
+    private final ItemStackHandler baublesInventory = new ItemStackHandler(BAUBLE_SLOTS) {
+        @Override
+        public boolean isItemValid(int slot, @Nonnull ItemStack stack) {
+            return com.x4yi.automata.compat.BaublesCompat.canEquipInSlot(stack, slot, null);
+        }
+
+        @Override
+        public int getSlotLimit(int slot) {
+            return 1;
+        }
+    };
     @Nullable
     private ItemStack cachedBackpackRef = ItemStack.EMPTY;
     @Nullable
@@ -56,6 +68,10 @@ public class AutomatonInventory {
 
     public ItemStackHandler getBackpackSlot() {
         return backpackSlot;
+    }
+
+    public ItemStackHandler getBaublesInventory() {
+        return baublesInventory;
     }
 
     @Nonnull
@@ -132,6 +148,7 @@ public class AutomatonInventory {
         NBTTagCompound tag = new NBTTagCompound();
         tag.setTag("Main", mainInventory.serializeNBT());
         tag.setTag("Backpack", backpackSlot.serializeNBT());
+        tag.setTag("Baubles", baublesInventory.serializeNBT());
         return tag;
     }
 
@@ -141,6 +158,9 @@ public class AutomatonInventory {
         }
         if (tag.hasKey("Backpack")) {
             backpackSlot.deserializeNBT(tag.getCompoundTag("Backpack"));
+        }
+        if (tag.hasKey("Baubles")) {
+            baublesInventory.deserializeNBT(tag.getCompoundTag("Baubles"));
         }
     }
 }
