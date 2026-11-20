@@ -2,7 +2,9 @@ package com.x4yi.automata.client;
 
 import java.util.Map;
 
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BufferBuilder;
@@ -29,6 +31,7 @@ import org.lwjgl.opengl.GL11;
 
 import com.x4yi.automata.AutomataMod;
 import com.x4yi.automata.ai.IAutomatonJob;
+import com.x4yi.automata.client.debug.VoxelOutline;
 import com.x4yi.automata.config.AutomataConfig;
 import com.x4yi.automata.coordination.SquadBlackboard;
 import com.x4yi.automata.entity.EntityAutomaton;
@@ -111,8 +114,29 @@ public final class DebugWorldRenderer {
                 GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA,
                 GlStateManager.SourceFactor.ONE,
                 GlStateManager.DestFactor.ZERO);
-        GlStateManager.disableDepth();
 
+        // Pass 1: depth-tested full alpha for crisp foreground geometry
+        GlStateManager.enableDepth();
+        GlStateManager.depthMask(false);
+        renderDebugScene(mc, player, serverWorld, event.getPartialTicks(), 1.0F);
+
+        // Pass 2: occluded silhouettes at 25% alpha through terrain
+        GlStateManager.disableDepth();
+        renderDebugScene(mc, player, serverWorld, event.getPartialTicks(), 0.25F);
+
+        GlStateManager.depthMask(true);
+        GlStateManager.enableDepth();
+        GlStateManager.disableBlend();
+        GlStateManager.enableTexture2D();
+        GlStateManager.popMatrix();
+    }
+
+    private static void renderDebugScene(
+            Minecraft mc,
+            EntityPlayer player,
+            @javax.annotation.Nullable WorldServer serverWorld,
+            float partialTicks,
+            float alphaScale) {
         SquadBlackboard sharedBlackboard = null;
 
         for (Entity entity : mc.world.loadedEntityList) {
@@ -128,7 +152,10 @@ public final class DebugWorldRenderer {
             float g = COLOR_SCRATCH[1];
             float b = COLOR_SCRATCH[2];
 
-            renderBotOutline(clientBot, event.getPartialTicks(), r, g, b);
+            renderBotOutline(clientBot, partialTicks, r, g, b, alphaScale);
+
+            PathResult path = null;
+            int breakCount = 0;
 
             if (serverWorld != null) {
                 Entity serverEntity = serverWorld.getEntityByID(clientBot.getEntityId());
@@ -138,44 +165,38 @@ public final class DebugWorldRenderer {
                 if (sharedBlackboard == null) {
                     sharedBlackboard = bot.getBrain().getContext().getBlackboard();
                 }
-
-                PathResult path = bot.getMovementController().getActivePath();
-                if (path != null && !path.isEmpty()) {
-                    renderPath(path, r, g, b);
-                }
-
+                path = bot.getMovementController().getActivePath();
                 IAutomatonJob job = bot.getBrain().getActiveJob();
                 if (job != null) {
-                    int count = job.copyPlannedBreakTargets(BREAK_TARGET_SCRATCH, MAX_DEBUG_BREAK_BLOCKS);
-                    if (count > 0) {
-                        renderPlannedBreakBlocks(BREAK_TARGET_SCRATCH, count, r, g, b);
-                    }
+                    breakCount = job.copyPlannedBreakTargets(BREAK_TARGET_SCRATCH, MAX_DEBUG_BREAK_BLOCKS);
                 }
             } else {
                 RemoteBotDebugSnapshot snapshot = REMOTE_BOT_SNAPSHOTS.get(clientBot.getEntityId());
                 if (snapshot != null) {
-                    if (snapshot.path != null && !snapshot.path.isEmpty()) {
-                        renderPath(snapshot.path, r, g, b);
-                    }
-                    if (snapshot.breakTargets.length > 0) {
-                        renderPlannedBreakBlocks(snapshot.breakTargets, snapshot.breakTargets.length, r, g, b);
+                    path = snapshot.path;
+                    breakCount = Math.min(snapshot.breakTargets.length, MAX_DEBUG_BREAK_BLOCKS);
+                    if (breakCount > 0) {
+                        System.arraycopy(snapshot.breakTargets, 0, BREAK_TARGET_SCRATCH, 0, breakCount);
                     }
                 }
+            }
+
+            long headTarget = breakCount > 0 ? BREAK_TARGET_SCRATCH[0] : Long.MIN_VALUE;
+            if (path != null && !path.isEmpty()) {
+                renderPath(clientBot, partialTicks, path, headTarget, r, g, b, alphaScale);
+            }
+            if (breakCount > 0) {
+                renderPlannedBreakBlocks(BREAK_TARGET_SCRATCH, breakCount, r, g, b, alphaScale);
             }
         }
 
         if (serverWorld != null) {
             if (sharedBlackboard != null) {
-                renderReservations(player, sharedBlackboard);
+                renderReservations(player, sharedBlackboard, alphaScale);
             }
         } else {
-            renderRemoteReservations(player);
+            renderRemoteReservations(player, alphaScale);
         }
-
-        GlStateManager.enableDepth();
-        GlStateManager.disableBlend();
-        GlStateManager.enableTexture2D();
-        GlStateManager.popMatrix();
     }
 
     private static void maybeRequestRemoteSync() {
@@ -234,13 +255,11 @@ public final class DebugWorldRenderer {
         }
     }
 
-    private static void renderRemoteReservations(EntityPlayer player) {
+    private static void renderRemoteReservations(EntityPlayer player, float alphaScale) {
         if (remoteReservationPositions.length == 0) {
             return;
         }
-        Tessellator tess = Tessellator.getInstance();
-        BufferBuilder buf = tess.getBuffer();
-        boolean any = false;
+        Int2ObjectOpenHashMap<LongOpenHashSet> byOwner = new Int2ObjectOpenHashMap<>();
         for (int i = 0; i < remoteReservationPositions.length; i++) {
             long packed = remoteReservationPositions[i];
             int x = PackedPos.unpackX(packed);
@@ -249,21 +268,15 @@ public final class DebugWorldRenderer {
             if (player.getDistanceSq(x + 0.5D, y + 0.5D, z + 0.5D) > MAX_DEBUG_DISTANCE_SQ) {
                 continue;
             }
-            if (!any) {
-                GlStateManager.glLineWidth(1.6F);
-                buf.begin(GL11.GL_LINES, DefaultVertexFormats.POSITION_COLOR);
-                any = true;
+            int owner = remoteReservationOwners[i];
+            LongOpenHashSet set = byOwner.get(owner);
+            if (set == null) {
+                set = new LongOpenHashSet();
+                byOwner.put(owner, set);
             }
-            computeBotColor(remoteReservationOwners[i], COLOR_SCRATCH);
-            emitBoxLines(
-                    buf,
-                    x + 0.06D, y + 0.06D, z + 0.06D,
-                    x + 0.94D, y + 0.94D, z + 0.94D,
-                    COLOR_SCRATCH[0], COLOR_SCRATCH[1], COLOR_SCRATCH[2], 0.55F);
+            set.add(packed);
         }
-        if (any) {
-            tess.draw();
-        }
+        renderGroupedReservationVolumes(byOwner, alphaScale);
     }
 
     private static long[] unpackLongs(byte[] raw) {
@@ -305,100 +318,121 @@ public final class DebugWorldRenderer {
         outRgb[2] = (rgb & 0xFF) / 255.0F;
     }
 
-    private static void renderBotOutline(EntityAutomaton bot, float partialTicks, float r, float g, float b) {
+    private static void renderBotOutline(EntityAutomaton bot, float partialTicks, float r, float g, float b, float alphaScale) {
         double ix = bot.lastTickPosX + (bot.posX - bot.lastTickPosX) * partialTicks - bot.posX;
         double iy = bot.lastTickPosY + (bot.posY - bot.lastTickPosY) * partialTicks - bot.posY;
         double iz = bot.lastTickPosZ + (bot.posZ - bot.lastTickPosZ) * partialTicks - bot.posZ;
         AxisAlignedBB box = bot.getEntityBoundingBox().offset(ix, iy, iz).grow(0.05D);
 
-        GlStateManager.glLineWidth(2.6F);
+        GlStateManager.glLineWidth(2.4F);
         Tessellator tess = Tessellator.getInstance();
         BufferBuilder buf = tess.getBuffer();
         buf.begin(GL11.GL_LINES, DefaultVertexFormats.POSITION_COLOR);
-        emitBoxLines(buf, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, r, g, b, 0.95F);
+        emitBoxLines(buf, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, r, g, b, 0.95F * alphaScale);
         tess.draw();
     }
 
-    private static void renderPath(PathResult path, float r, float g, float b) {
+    private static void renderPath(
+            EntityAutomaton bot,
+            float partialTicks,
+            PathResult path,
+            long headTarget,
+            float r,
+            float g,
+            float b,
+            float alphaScale) {
+        double botX = bot.lastTickPosX + (bot.posX - bot.lastTickPosX) * partialTicks;
+        double botY = bot.lastTickPosY + (bot.posY - bot.lastTickPosY) * partialTicks + 0.15D;
+        double botZ = bot.lastTickPosZ + (bot.posZ - bot.lastTickPosZ) * partialTicks;
+
         GlStateManager.glLineWidth(2.2F);
         Tessellator tess = Tessellator.getInstance();
         BufferBuilder buf = tess.getBuffer();
         buf.begin(GL11.GL_LINE_STRIP, DefaultVertexFormats.POSITION_COLOR);
+        buf.pos(botX, botY, botZ).color(r, g, b, 0.55F * alphaScale).endVertex();
+
         for (int i = 0; i < path.length(); i++) {
             long step = path.getStep(i);
             double x = PackedPos.unpackX(step) + 0.5D;
             double y = PackedPos.unpackY(step) + 0.22D;
             double z = PackedPos.unpackZ(step) + 0.5D;
-            buf.pos(x, y, z).color(r, g, b, 0.92F).endVertex();
+            byte action = path.getAction(i);
+            float sr = r;
+            float sg = g;
+            float sb = b;
+            if (action == PathNodeAction.PILLAR_UP || action == PathNodeAction.BRIDGE) {
+                sr = 1.0F;
+                sg = 0.85F;
+                sb = 0.20F;
+            } else if (action == PathNodeAction.BREAK_THROUGH) {
+                sr = 1.0F;
+                sg = 0.30F;
+                sb = 0.25F;
+            } else if (action == PathNodeAction.SPRINT_JUMP) {
+                sr = 0.30F;
+                sg = 0.95F;
+                sb = 1.0F;
+            } else if (action == PathNodeAction.FLY || action == PathNodeAction.GLIDE_DOWN) {
+                sr = 0.75F;
+                sg = 0.45F;
+                sb = 1.0F;
+            }
+            buf.pos(x, y, z).color(sr, sg, sb, 0.92F * alphaScale).endVertex();
+        }
+        if (headTarget != Long.MIN_VALUE) {
+            buf.pos(
+                    PackedPos.unpackX(headTarget) + 0.5D,
+                    PackedPos.unpackY(headTarget) + 0.5D,
+                    PackedPos.unpackZ(headTarget) + 0.5D)
+                    .color(r, g, b, 0.65F * alphaScale)
+                    .endVertex();
         }
         tess.draw();
-
-        // Highlight special path actions (pillar, bridge, break-through, sprint-jump).
-        boolean hasSpecial = false;
-        for (int i = 0; i < path.length(); i++) {
-            byte action = path.getAction(i);
-            if (action == PathNodeAction.PILLAR_UP
-                    || action == PathNodeAction.BRIDGE
-                    || action == PathNodeAction.BREAK_THROUGH
-                    || action == PathNodeAction.SPRINT_JUMP) {
-                if (!hasSpecial) {
-                    GlStateManager.glLineWidth(1.8F);
-                    buf.begin(GL11.GL_LINES, DefaultVertexFormats.POSITION_COLOR);
-                    hasSpecial = true;
-                }
-                long step = path.getStep(i);
-                double cx = PackedPos.unpackX(step) + 0.5D;
-                double cy = PackedPos.unpackY(step) + 0.22D;
-                double cz = PackedPos.unpackZ(step) + 0.5D;
-                double rad = 0.18D;
-                emitBoxLines(buf, cx - rad, cy - rad, cz - rad, cx + rad, cy + rad, cz + rad, r, g, b, 0.95F);
-            }
-        }
-        if (hasSpecial) {
-            tess.draw();
-        }
     }
 
-    private static void renderPlannedBreakBlocks(long[] packedTargets, int count, float r, float g, float b) {
+    private static void renderPlannedBreakBlocks(
+            long[] packedTargets,
+            int count,
+            float r,
+            float g,
+            float b,
+            float alphaScale) {
         Tessellator tess = Tessellator.getInstance();
         BufferBuilder buf = tess.getBuffer();
 
-        // Highlight active target (index 0) with a thicker outline.
+        // Highlight active target (index 0) with a slightly thicker outline.
         long head = packedTargets[0];
         double hx = PackedPos.unpackX(head);
         double hy = PackedPos.unpackY(head);
         double hz = PackedPos.unpackZ(head);
-        GlStateManager.glLineWidth(2.8F);
+        GlStateManager.glLineWidth(2.6F);
         buf.begin(GL11.GL_LINES, DefaultVertexFormats.POSITION_COLOR);
-        emitBoxLines(buf, hx - 0.01D, hy - 0.01D, hz - 0.01D, hx + 1.01D, hy + 1.01D, hz + 1.01D, r, g, b, 0.98F);
+        emitBoxLines(buf, hx - 0.01D, hy - 0.01D, hz - 0.01D, hx + 1.01D, hy + 1.01D, hz + 1.01D, r, g, b, 0.98F * alphaScale);
         tess.draw();
 
         if (count <= 1) {
             return;
         }
-        // Batch queued upcoming targets with fading alpha.
-        GlStateManager.glLineWidth(1.4F);
-        buf.begin(GL11.GL_LINES, DefaultVertexFormats.POSITION_COLOR);
-        for (int i = 1; i < count; i++) {
-            long packed = packedTargets[i];
-            double x = PackedPos.unpackX(packed);
-            double y = PackedPos.unpackY(packed);
-            double z = PackedPos.unpackZ(packed);
-            float t = (float) i / (float) Math.max(1, count - 1);
-            float alpha = 0.80F - 0.55F * t;
-            emitBoxLines(buf, x + 0.02D, y + 0.02D, z + 0.02D, x + 0.98D, y + 0.98D, z + 0.98D, r, g, b, alpha);
+        LongOpenHashSet cells = new LongOpenHashSet(count);
+        for (int i = 0; i < count; i++) {
+            cells.add(packedTargets[i]);
         }
+        GlStateManager.glLineWidth(1.6F);
+        buf.begin(GL11.GL_LINES, DefaultVertexFormats.POSITION_COLOR);
+        float edgeAlpha = 0.72F * alphaScale;
+        VoxelOutline.collectExteriorEdges(cells, (x1, y1, z1, x2, y2, z2) -> {
+            buf.pos(x1, y1, z1).color(r, g, b, edgeAlpha).endVertex();
+            buf.pos(x2, y2, z2).color(r, g, b, edgeAlpha).endVertex();
+        });
         tess.draw();
     }
 
-    private static void renderReservations(EntityPlayer player, SquadBlackboard blackboard) {
+    private static void renderReservations(EntityPlayer player, SquadBlackboard blackboard, float alphaScale) {
         Map<Long, SquadBlackboard.BlockReservation> snapshot = blackboard.getActiveReservationsSnapshot();
         if (snapshot.isEmpty()) {
             return;
         }
-        Tessellator tess = Tessellator.getInstance();
-        BufferBuilder buf = tess.getBuffer();
-        boolean any = false;
+        Int2ObjectOpenHashMap<LongOpenHashSet> byOwner = new Int2ObjectOpenHashMap<>();
         for (Map.Entry<Long, SquadBlackboard.BlockReservation> entry : snapshot.entrySet()) {
             long packed = entry.getKey();
             int x = PackedPos.unpackX(packed);
@@ -407,21 +441,39 @@ public final class DebugWorldRenderer {
             if (player.getDistanceSq(x + 0.5D, y + 0.5D, z + 0.5D) > MAX_DEBUG_DISTANCE_SQ) {
                 continue;
             }
-            if (!any) {
-                GlStateManager.glLineWidth(1.6F);
-                buf.begin(GL11.GL_LINES, DefaultVertexFormats.POSITION_COLOR);
-                any = true;
+            int owner = entry.getValue().ownerEntityId();
+            LongOpenHashSet set = byOwner.get(owner);
+            if (set == null) {
+                set = new LongOpenHashSet();
+                byOwner.put(owner, set);
             }
-            computeBotColor(entry.getValue().ownerEntityId(), COLOR_SCRATCH);
-            emitBoxLines(
-                    buf,
-                    x + 0.06D, y + 0.06D, z + 0.06D,
-                    x + 0.94D, y + 0.94D, z + 0.94D,
-                    COLOR_SCRATCH[0], COLOR_SCRATCH[1], COLOR_SCRATCH[2], 0.55F);
+            set.add(packed);
         }
-        if (any) {
-            tess.draw();
+        renderGroupedReservationVolumes(byOwner, alphaScale);
+    }
+
+    private static void renderGroupedReservationVolumes(
+            Int2ObjectOpenHashMap<LongOpenHashSet> byOwner,
+            float alphaScale) {
+        if (byOwner.isEmpty()) {
+            return;
         }
+        Tessellator tess = Tessellator.getInstance();
+        BufferBuilder buf = tess.getBuffer();
+        GlStateManager.glLineWidth(1.5F);
+        buf.begin(GL11.GL_LINES, DefaultVertexFormats.POSITION_COLOR);
+        float alpha = 0.55F * alphaScale;
+        for (Int2ObjectMap.Entry<LongOpenHashSet> entry : byOwner.int2ObjectEntrySet()) {
+            computeBotColor(entry.getIntKey(), COLOR_SCRATCH);
+            float r = COLOR_SCRATCH[0];
+            float g = COLOR_SCRATCH[1];
+            float b = COLOR_SCRATCH[2];
+            VoxelOutline.collectExteriorEdges(entry.getValue(), (x1, y1, z1, x2, y2, z2) -> {
+                buf.pos(x1, y1, z1).color(r, g, b, alpha).endVertex();
+                buf.pos(x2, y2, z2).color(r, g, b, alpha).endVertex();
+            });
+        }
+        tess.draw();
     }
 
     private static void emitBoxLines(
