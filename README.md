@@ -1,6 +1,6 @@
-# Automata (v1.1.0)
+# Automata (v1.2.0)
 
-Autonomous player-like agents with 3D navigation, tactical combat, survival instincts, logistics, and squad coordination for **Minecraft 1.12.2 (CleanroomMC)**.
+Autonomous player-like agents with 3D navigation, tactical & aerial combat, survival instincts, logistics, and squad coordination for **Minecraft 1.12.2 (CleanroomMC)**.
 
 ---
 
@@ -9,12 +9,12 @@ Autonomous player-like agents with 3D navigation, tactical combat, survival inst
 - **Minecraft:** `1.12.2`
 - **Mod Loader:** **CleanroomMC** `0.6.X` (Java 21) or `0.7.X` (Java 25)
 - **Java:** `21+` (compiled targeting CleanroomMC / Java 25)
-- **Required Dependency:** **`x4ui` `r1.0b7`** (exact version required: `required-after:x4ui@[r1.0b7]`)
-- **Optional Integrations:** Hwyla / Waila, HEI / JEI, Useful Backpacks, Scape and Run: Parasites (COTH immunity + tactical classification), Spartan Weaponry, and claim/protection mods (via `ClaimProtectionCompat`)
+- **Required Dependency:** **[x4ui](https://github.com/X4yii/x4ui)**|
+- **Optional Integrations:** Hwyla / Waila, HEI / JEI, Useful Backpacks, Baubles & RLArtifacts (7 accessory slots in Overview), Wings (server-side flight physics & aerial combat), Scape and Run: Parasites + NoCubes SRP Combat Addon, Spartan Weaponry, OptiFine / Dynamic Lights (offhand torch), and claim/protection mods (via `ClaimProtectionCompat`)
 
 ---
 
-## Features (`v1.1.0`)
+## Features (`v1.2.0`)
 
 ### Navigation, Movement & Safe Placement
 - **3D Asynchronous Pathfinding (`AutomatonPathfinder` + `WorldCacheManager`):**
